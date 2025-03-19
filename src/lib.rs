@@ -132,4 +132,23 @@ where
         }
         Ok(None)
     }
+
+    pub fn nearest_neighbor_iter_with_distance_2(
+        &self,
+        query_point: &T,
+    ) -> Result<Vec<T>, GeohashRTreeError> {
+        let lnglat = query_point.point();
+        let geohash = encode(
+            Coord {
+                x: lnglat.0,
+                y: lnglat.1,
+            },
+            self.geohash_precision,
+        )?;
+        if let Some(rtree) = self.arc_dashmap.get(&geohash.into()) {
+            let nearest_iter = rtree.nearest_neighbor_iter_with_distance_2(query_point);
+            return Ok(nearest_iter.map(|iter| iter.0.clone()).collect());
+        }
+        Ok(vec![])
+    }
 }
