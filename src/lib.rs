@@ -97,4 +97,39 @@ where
 
         Ok(count)
     }
+
+    pub fn insert(&self, t: T) -> Result<(), GeohashRTreeError> {
+        let lnglat = t.point();
+        let geohash = encode(
+            Coord {
+                x: lnglat.0,
+                y: lnglat.1,
+            },
+            self.geohash_precision,
+        )?;
+
+        let mut rtree = self
+            .arc_dashmap
+            .entry(geohash.into())
+            .or_insert_with(RTree::new);
+        rtree.insert(t);
+
+        Ok(())
+    }
+
+    pub fn nearest_neighbor(&self, query_point: &T) -> Result<Option<T>, GeohashRTreeError> {
+        let lnglat = query_point.point();
+        let geohash = encode(
+            Coord {
+                x: lnglat.0,
+                y: lnglat.1,
+            },
+            self.geohash_precision,
+        )?;
+        if let Some(rtree) = self.arc_dashmap.get(&geohash.into()) {
+            let nearest = rtree.nearest_neighbor(query_point);
+            return Ok(nearest.cloned());
+        }
+        Ok(None)
+    }
 }
