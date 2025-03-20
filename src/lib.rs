@@ -10,12 +10,11 @@ pub trait Point {
     fn point(&self) -> (f64, f64);
 }
 
-pub struct GeohashRTree<K, T>
+pub struct GeohashRTree<T>
 where
-    K: AsRef<[u8]> + Eq + Hash + From<String>,
     T: Point + rstar::Point + Clone + Send + Sync + bincode::Decode<()>,
 {
-    arc_dashmap: Arc<DashMap<K, RTree<T>>>,
+    arc_dashmap: Arc<DashMap<String, RTree<T>>>,
     geohash_precision: usize,
     persistence_path: Option<PathBuf>,
 }
@@ -30,9 +29,8 @@ pub enum GeohashRTreeError {
     Unknown,
 }
 
-impl<K, T> GeohashRTree<K, T>
+impl<T> GeohashRTree<T>
 where
-    K: AsRef<[u8]> + Eq + Hash + From<String>,
     T: Point + rstar::Point + Clone + Send + Sync + bincode::Decode<()>,
 {
     /// Creates a new instance of the struct with the specified geohash precision
@@ -126,7 +124,7 @@ where
             },
             self.geohash_precision,
         )?;
-        if let Some(rtree) = self.arc_dashmap.get(&geohash.into()) {
+        if let Some(rtree) = self.arc_dashmap.get(&geohash) {
             let nearest = rtree.nearest_neighbor(query_point);
             return Ok(nearest.cloned());
         }
@@ -145,7 +143,7 @@ where
             },
             self.geohash_precision,
         )?;
-        if let Some(rtree) = self.arc_dashmap.get(&geohash.into()) {
+        if let Some(rtree) = self.arc_dashmap.get(&geohash) {
             let nearest_iter = rtree.nearest_neighbor_iter_with_distance_2(query_point);
             return Ok(nearest_iter.map(|iter| iter.0.clone()).collect());
         }
