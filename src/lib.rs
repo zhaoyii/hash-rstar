@@ -1,10 +1,11 @@
 use dashmap::DashMap;
 use geohash::{Coord, encode};
-use rstar::RTree;
-use std::{hash::Hash, path::PathBuf, sync::Arc};
+use rstar::{Envelope, RTree};
+use std::{path::PathBuf, sync::Arc};
 use thiserror::Error;
 
 pub use rstar::Point as RstarPoint;
+pub use rstar::RTreeObject;
 
 pub trait Point {
     fn point(&self) -> (f64, f64);
@@ -12,7 +13,7 @@ pub trait Point {
 
 pub struct GeohashRTree<T>
 where
-    T: Point + rstar::Point + Clone + Send + Sync + bincode::Decode<()>,
+    T: Point + RstarPoint + Clone + Send + Sync + bincode::Decode<()>,
 {
     arc_dashmap: Arc<DashMap<String, RTree<T>>>,
     geohash_precision: usize,
@@ -31,7 +32,7 @@ pub enum GeohashRTreeError {
 
 impl<T> GeohashRTree<T>
 where
-    T: Point + rstar::Point + Clone + Send + Sync + bincode::Decode<()>,
+    T: Point + RstarPoint + Clone + Send + Sync + bincode::Decode<()>,
 {
     /// Creates a new instance of the struct with the specified geohash precision
     /// and an optional persistence path.
@@ -124,8 +125,9 @@ where
             },
             self.geohash_precision,
         )?;
+
         if let Some(rtree) = self.arc_dashmap.get(&geohash) {
-            let nearest = rtree.nearest_neighbor(query_point);
+            let nearest = rtree.nearest_neighbor(&query_point.envelope().center());
             return Ok(nearest.cloned());
         }
         Ok(None)
@@ -144,9 +146,96 @@ where
             self.geohash_precision,
         )?;
         if let Some(rtree) = self.arc_dashmap.get(&geohash) {
-            let nearest_iter = rtree.nearest_neighbor_iter_with_distance_2(query_point);
+            let nearest_iter =
+                rtree.nearest_neighbor_iter_with_distance_2(&query_point.envelope().center());
             return Ok(nearest_iter.map(|iter| iter.0.clone()).collect());
         }
         Ok(vec![])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bincode::{Decode, Encode};
+
+    #[derive(Clone, PartialEq, Debug, Encode, Decode)]
+    struct Player {
+        name: String,
+        x_coordinate: f64,
+        y_coordinate: f64,
+    }
+
+    impl Point for Player {
+        fn point(&self) -> (f64, f64) {
+            (self.x_coordinate, self.y_coordinate)
+        }
+    }
+
+    impl RstarPoint for Player {
+        type Scalar = f64;
+        const DIMENSIONS: usize = 2;
+
+        fn generate(mut generator: impl FnMut(usize) -> Self::Scalar) -> Self {
+            Player {
+                name: "Player".to_string(),
+                x_coordinate: generator(0),
+                y_coordinate: generator(1),
+            }
+        }
+
+        fn nth(&self, index: usize) -> Self::Scalar {
+            match index {
+                0 => self.x_coordinate,
+                1 => self.y_coordinate,
+                _ => unreachable!(),
+            }
+        }
+
+        fn nth_mut(&mut self, index: usize) -> &mut Self::Scalar {
+            match index {
+                0 => &mut self.x_coordinate,
+                1 => &mut self.y_coordinate,
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
+    fn test_geohash_rtree() {
+        let hrt: GeohashRTree<Player> = GeohashRTree::new(5, None);
+        let players = vec![
+            Player {
+                name: "1".into(),
+                x_coordinate: 116.400357,
+                y_coordinate: 39.906453,
+            },
+            Player {
+                name: "2".into(),
+                x_coordinate: 116.401633,
+                y_coordinate: 39.906302,
+            },
+            Player {
+                name: "3".into(),
+                x_coordinate: 116.401645,
+                y_coordinate: 39.904753,
+            },
+        ];
+        hrt.insert(players[0].clone()).unwrap();
+        hrt.insert(players[1].clone()).unwrap();
+        hrt.insert(players[2].clone()).unwrap();
+
+        let nearest = hrt
+            .nearest_neighbor(&Player {
+                name: "1".into(),
+                x_coordinate: 116.400357,
+                y_coordinate: 39.906453,
+            })
+            .unwrap()
+            .unwrap();
+
+
+        println!("nearest: {:?}", nearest);
+        assert_eq!(players[0], nearest)
     }
 }
