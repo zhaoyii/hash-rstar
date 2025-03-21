@@ -1,6 +1,8 @@
 use dashmap::DashMap;
+use geo::{Distance, Haversine};
 use geohash::{Coord, encode};
 use rstar::{Envelope, RTree};
+use std::cmp::Ordering;
 use std::{path::PathBuf, sync::Arc};
 use thiserror::Error;
 
@@ -77,6 +79,7 @@ where
             while let Some(entry) = itr.next() {
                 let (geohash_key, value) = entry?;
                 let vals: Vec<T> = bincode::decode_from_slice(&value, config)?.0;
+                println!("length: {:?}", vals.len());
                 hrt.arc_dashmap.insert(
                     geohash_key.escape_ascii().to_string(),
                     RTree::bulk_load(vals),
@@ -168,34 +171,51 @@ where
             self.geohash_precision,
         )?;
 
+        let mut nearests = vec![];
         if let Some(nearest) = self.get_nearby_geohash(query_point, &geohash_str)? {
-            return Ok(Some(nearest.clone()));
+            nearests.push(nearest);
         }
         let neighbors = geohash::neighbors(&geohash_str)?;
         if let Some(nearest) = self.get_nearby_geohash(query_point, &neighbors.n)? {
-            return Ok(Some(nearest.clone()));
+            nearests.push(nearest);
         }
         if let Some(nearest) = self.get_nearby_geohash(query_point, &neighbors.ne)? {
-            return Ok(Some(nearest.clone()));
+            nearests.push(nearest);
         }
         if let Some(nearest) = self.get_nearby_geohash(query_point, &neighbors.e)? {
-            return Ok(Some(nearest.clone()));
+            nearests.push(nearest);
         }
         if let Some(nearest) = self.get_nearby_geohash(query_point, &neighbors.se)? {
-            return Ok(Some(nearest.clone()));
+            nearests.push(nearest);
         }
         if let Some(nearest) = self.get_nearby_geohash(query_point, &neighbors.s)? {
-            return Ok(Some(nearest.clone()));
+            nearests.push(nearest);
         }
         if let Some(nearest) = self.get_nearby_geohash(query_point, &neighbors.sw)? {
-            return Ok(Some(nearest.clone()));
+            nearests.push(nearest);
         }
         if let Some(nearest) = self.get_nearby_geohash(query_point, &neighbors.w)? {
-            return Ok(Some(nearest.clone()));
+            nearests.push(nearest);
         }
         if let Some(nearest) = self.get_nearby_geohash(query_point, &neighbors.nw)? {
-            return Ok(Some(nearest.clone()));
+            nearests.push(nearest);
         }
+        nearests.sort_by(|a, b| {
+            let c_point = query_point.point();
+            let a_point = a.point();
+            let b_point = b.point();
+            let a_distance: f64 = Haversine::distance(
+                geo::Point::new(a_point.0, a_point.1),
+                geo::Point::new(c_point.0, c_point.1),
+            );
+            let b_distance: f64 = Haversine::distance(
+                geo::Point::new(b_point.0, b_point.1),
+                geo::Point::new(c_point.0, c_point.1),
+            );
+            a_distance
+                .partial_cmp(&b_distance)
+                .unwrap_or(Ordering::Equal)
+        });
         Ok(None)
     }
 

@@ -1,6 +1,7 @@
 use std::{
     fs::File,
-    path::{Path, PathBuf}, time::SystemTime,
+    path::{Path, PathBuf},
+    time::SystemTime,
 };
 
 use bincode::{Decode, Encode};
@@ -63,21 +64,27 @@ impl RstarPoint for Player {
 
 fn main() {
     let mut rdr = csv::Reader::from_reader(
-        File::open("C:\\Users\\admin\\Desktop\\baidu_pois\\datas\\map_xian2.csv").unwrap(),
+        File::open("C:\\Users\\admin\\Desktop\\baidu_pois\\data2\\港澳.csv").unwrap(),
     );
-    let hrt: GeohashRTree<Player> = GeohashRTree::new(
-        5,
-        Some(PathBuf::from(
-            "C:\\Users\\admin\\Desktop\\baidu_pois\\hash_rtree\\hash_rtree_db",
-        )),
-    );
+    // let hrt: GeohashRTree<Player> = GeohashRTree::new(
+    //     5,
+    //     Some(PathBuf::from(
+    //         "C:\\Users\\admin\\Desktop\\baidu_pois\\hash_rtree\\hash_rtree_db",
+    //     )),
+    // );
 
     let now = SystemTime::now();
+    let hrt: GeohashRTree<Player> = GeohashRTree::load(
+        5,
+        PathBuf::from(
+            "C:\\Users\\admin\\Desktop\\baidu_pois\\hash_rtree\\hash_rtree_db",
+        ),
+    ).unwrap();
     println!("load time: {:?}", now.elapsed().unwrap());
 
-    for result in rdr.deserialize() {
-        let record: Player = result.unwrap();
-        println!("{:?}", record);
-        hrt.insert(record).unwrap();
-    }
+    // for result in rdr.deserialize() {
+    //     let record: Player = result.unwrap();
+    //     println!("{:?}", record);
+    //     hrt.insert(record).unwrap();
+    // }
 }
