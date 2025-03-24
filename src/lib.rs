@@ -3,6 +3,7 @@ use geo::{Distance, Haversine};
 use geohash::{Coord, encode};
 use rstar::{Envelope, RTree};
 use std::cmp::Ordering;
+use std::thread;
 use std::{
     path::PathBuf,
     sync::{Arc, RwLock},
@@ -45,11 +46,19 @@ pub trait UniqueId: Clone {
 
 pub struct GeohashRTree<T>
 where
-    T: UniqueId + Point + RstarPoint + Clone + Send + Sync + bincode::Decode<()> + bincode::Encode,
+    T: UniqueId
+        + Point
+        + RstarPoint
+        + Clone
+        + Send
+        + Sync
+        + bincode::Decode<()>
+        + bincode::Encode
+        + 'static,
 {
     arc_dashmap: Arc<DashMap<String, RTree<T>>>,
     geohash_precision: usize,
-    db: Option<sled::Db>,
+    db: Option<Arc<sled::Db>>,
 
     /// A thread-safe boolean flag indicating whether the data structure has been loaded into memory.
     /// Protected by a read-write lock for concurrent access.
@@ -82,7 +91,7 @@ where
             loaded: Arc::new(RwLock::new(true)),
         };
         if let Some(persistence_path) = persistence_path {
-            s.db = Some(sled::open(persistence_path).unwrap());
+            s.db = Some(Arc::new(sled::open(persistence_path).unwrap()));
         }
         s
     }
@@ -105,7 +114,7 @@ where
         let hrt = Self {
             arc_dashmap: Arc::new(DashMap::new()),
             geohash_precision,
-            db: Some(sled::open(persistence_path)?),
+            db: Some(Arc::new(sled::open(persistence_path)?)),
             loaded: Arc::new(RwLock::new(false)),
         };
 
@@ -118,12 +127,59 @@ where
                 println!("length: {:?}", vals.len());
                 hrt.arc_dashmap.insert(
                     geohash_key.escape_ascii().to_string(),
-                    RTree::bulk_load(vals),
+                    RTree::bulk_load(vals.clone()),
                 );
             }
         }
 
         *hrt.loaded.write().unwrap() = true;
+        Ok(hrt)
+    }
+
+    pub fn load_async(
+        geohash_precision: usize,
+        persistence_path: PathBuf,
+    ) -> Result<Self, GeohashRTreeError> {
+        let hrt = Self {
+            arc_dashmap: Arc::new(DashMap::new()),
+            geohash_precision,
+            db: Some(Arc::new(sled::open(persistence_path)?)),
+            loaded: Arc::new(RwLock::new(false)),
+        };
+
+        let acr_dashmap = Arc::clone(&hrt.arc_dashmap);
+
+        if let Some(db) = hrt.db.clone() {
+            // Load the data from the persistence path
+            thread::spawn(move || {
+                let config = bincode::config::standard();
+                let mut itr = db.iter();
+                while let Some(entry) = itr.next() {
+                    let (geohash_key, value) = match entry {
+                        Ok((geohash_key, value)) => (geohash_key, value),
+                        Err(e) => {
+                            println!("error: {}", e);
+                            return ();
+                        }
+                    };
+
+                    match bincode::decode_from_slice(&value, config) {
+                        Ok((vals, _)) => {
+                            acr_dashmap.insert(
+                                geohash_key.escape_ascii().to_string(),
+                                RTree::bulk_load(vals),
+                            );
+                        }
+                        Err(e) => {
+                            println!("error: {}", e);
+                        }
+                    }
+                }
+
+                println!("loaded, len: {}", acr_dashmap.len());
+            });
+        }
+
         Ok(hrt)
     }
 
