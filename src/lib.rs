@@ -12,6 +12,8 @@ use thiserror::Error;
 pub use rstar::Point as RstarPoint;
 pub use rstar::RTreeObject;
 
+mod utils;
+
 pub trait Point {
     fn point(&self) -> (f64, f64);
 
@@ -341,6 +343,49 @@ where
                 return Ok(nearest);
             }
         }
+        Ok(None)
+    }
+
+    /// Finds the nearest neighbor to the given query point using geohash-based search.
+    ///
+    /// # Arguments
+    ///
+    /// * `query_point` - The point to find the nearest neighbor for, implementing the required trait.
+    ///
+    /// # Returns
+    ///
+    /// * `Result<Option<T>, GeohashRTreeError>` - Returns the nearest neighbor if found, None if no neighbors exist,
+    ///   or an error if the operation fails.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let tree = GeohashRTree::new(5);
+    /// let point = Point::new(longitude, latitude);
+    /// let nearest = tree.nearest_neighbor_2(&point)?;
+    /// ```
+    pub fn nearest_neighbor_2(&self, query_point: &T) -> Result<Option<T>, GeohashRTreeError> {
+        let lnglat = query_point.point();
+        let point = geo::point!(x: lnglat.0, y: lnglat.1);
+        let sorted_geohash_cells =
+            utils::sort_geohash_cells_by_min_distance(point, self.geohash_precision)?;
+
+        for s in sorted_geohash_cells.iter().enumerate() {
+            if let Some(nearest) = self.get_nearby_geohash(query_point, &s.1.0)? {
+                let nearest_p = nearest.point();
+
+                // last geohash cell
+                if s.0 == sorted_geohash_cells.len() - 1 {
+                    return Ok(Some(nearest));
+                }
+
+                let dist = Haversine::distance(point, geo::point!(x: nearest_p.0, y: nearest_p.1));
+                if dist <= sorted_geohash_cells[s.0 + 1].1 {
+                    return Ok(Some(nearest));
+                }
+            }
+        }
+
         Ok(None)
     }
 
