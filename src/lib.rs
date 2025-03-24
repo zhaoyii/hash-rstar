@@ -408,6 +408,10 @@ where
         }
         Ok(vec![])
     }
+
+    pub fn len(&self) -> usize {
+        self.arc_dashmap.len()
+    }
 }
 
 #[cfg(test)]
