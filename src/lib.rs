@@ -3,7 +3,10 @@ use geo::{Distance, Haversine};
 use geohash::{Coord, encode};
 use rstar::{Envelope, RTree};
 use std::cmp::Ordering;
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{Arc, RwLock},
+};
 use thiserror::Error;
 
 pub use rstar::Point as RstarPoint;
@@ -11,6 +14,27 @@ pub use rstar::RTreeObject;
 
 pub trait Point {
     fn point(&self) -> (f64, f64);
+
+    /// Calculates the Haversine distance between two points on Earth's surface.
+    ///
+    /// Returns the distance in meters between this point and another point,
+    /// using the Haversine formula which accounts for Earth's spherical shape.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - The other point to calculate distance to
+    ///
+    /// # Returns
+    ///
+    /// The distance in meters between the two points
+    fn distance(&self, other: &Self) -> f64 {
+        let self_point = self.point();
+        let other_point = other.point();
+        Haversine::distance(
+            geo::Point::new(self_point.0, self_point.1),
+            geo::Point::new(other_point.0, other_point.1),
+        )
+    }
 }
 
 pub trait UniqueId: Clone {
@@ -24,6 +48,10 @@ where
     arc_dashmap: Arc<DashMap<String, RTree<T>>>,
     geohash_precision: usize,
     db: Option<sled::Db>,
+
+    /// A thread-safe boolean flag indicating whether the data structure has been loaded into memory.
+    /// Protected by a read-write lock for concurrent access.
+    loaded: Arc<RwLock<bool>>,
 }
 
 #[derive(Error, Debug)]
@@ -49,6 +77,7 @@ where
             arc_dashmap: Arc::new(DashMap::new()),
             geohash_precision,
             db: None,
+            loaded: Arc::new(RwLock::new(true)),
         };
         if let Some(persistence_path) = persistence_path {
             s.db = Some(sled::open(persistence_path).unwrap());
@@ -71,7 +100,12 @@ where
         persistence_path: PathBuf,
     ) -> Result<Self, GeohashRTreeError> {
         let config = bincode::config::standard();
-        let hrt = Self::new(geohash_precision, Some(persistence_path));
+        let hrt = Self {
+            arc_dashmap: Arc::new(DashMap::new()),
+            geohash_precision,
+            db: Some(sled::open(persistence_path)?),
+            loaded: Arc::new(RwLock::new(false)),
+        };
 
         if let Some(db) = &hrt.db {
             // Load the data from the persistence path
@@ -87,6 +121,7 @@ where
             }
         }
 
+        *hrt.loaded.write().unwrap() = true;
         Ok(hrt)
     }
 
@@ -100,18 +135,42 @@ where
             self.geohash_precision,
         )?;
 
-        let mut rtree = self
-            .arc_dashmap
-            .entry(geohash_str.clone())
-            .or_insert_with(RTree::new);
-        rtree.insert(t);
+        if *self.loaded.read().unwrap() {
+            let mut rtree = self
+                .arc_dashmap
+                .entry(geohash_str.clone())
+                .or_insert_with(RTree::new);
+            rtree.insert(t);
 
-        if let Some(db) = &self.db {
-            let config = bincode::config::standard();
-            let mut vals: Vec<T> = Vec::with_capacity(rtree.size());
-            rtree.iter().for_each(|v| vals.push(v.clone()));
-            let enc = bincode::encode_to_vec(vals, config)?;
-            db.insert(&geohash_str, enc)?;
+            if let Some(db) = &self.db {
+                let config = bincode::config::standard();
+                let mut vals: Vec<T> = Vec::with_capacity(rtree.size());
+                rtree.iter().for_each(|v| vals.push(v.clone()));
+                let enc = bincode::encode_to_vec(vals, config)?;
+                db.insert(&geohash_str, enc)?;
+            }
+        } else {
+            if let Some(db) = &self.db {
+                if let Some(data) = db.get(&geohash_str)? {
+                    let config = bincode::config::standard();
+                    let dec: (Vec<T>, _) = bincode::decode_from_slice(&data, config)?;
+                    let mut rtree = RTree::bulk_load(dec.0);
+                    rtree.insert(t);
+
+                    let mut vals: Vec<T> = Vec::with_capacity(rtree.size());
+                    rtree.iter().for_each(|v| vals.push(v.clone()));
+                    let enc = bincode::encode_to_vec(vals, config)?;
+                    db.insert(&geohash_str, enc)?;
+
+                    self.arc_dashmap.insert(geohash_str, rtree);
+                }
+            } else {
+                let mut rtree = self
+                    .arc_dashmap
+                    .entry(geohash_str.clone())
+                    .or_insert_with(RTree::new);
+                rtree.insert(t);
+            }
         }
         Ok(())
     }
@@ -125,14 +184,43 @@ where
             },
             self.geohash_precision,
         )?;
-        if let Some(mut rtree) = self.arc_dashmap.get_mut(&geohash_str) {
-            if let Some(_) = rtree.remove(&t) {
-                if let Some(db) = &self.db {
+
+        if *self.loaded.read().unwrap() {
+            if let Some(mut rtree) = self.arc_dashmap.get_mut(&geohash_str) {
+                if let Some(_) = rtree.remove(&t) {
+                    if let Some(db) = &self.db {
+                        let config = bincode::config::standard();
+                        let mut vals: Vec<T> = Vec::with_capacity(rtree.size());
+                        rtree.iter().for_each(|v| vals.push(v.clone()));
+                        let enc = bincode::encode_to_vec(vals, config)?;
+                        db.insert(&geohash_str, enc)?;
+                    }
+                }
+            }
+        } else {
+            if let Some(db) = &self.db {
+                if let Some(data) = db.get(&geohash_str)? {
                     let config = bincode::config::standard();
+                    let dec: (Vec<T>, _) = bincode::decode_from_slice(&data, config)?;
+                    let mut rtree = RTree::bulk_load(dec.0);
+                    rtree.remove(&t);
+
                     let mut vals: Vec<T> = Vec::with_capacity(rtree.size());
                     rtree.iter().for_each(|v| vals.push(v.clone()));
                     let enc = bincode::encode_to_vec(vals, config)?;
                     db.insert(&geohash_str, enc)?;
+                }
+            } else {
+                if let Some(mut rtree) = self.arc_dashmap.get_mut(&geohash_str) {
+                    if let Some(_) = rtree.remove(&t) {
+                        if let Some(db) = &self.db {
+                            let config = bincode::config::standard();
+                            let mut vals: Vec<T> = Vec::with_capacity(rtree.size());
+                            rtree.iter().for_each(|v| vals.push(v.clone()));
+                            let enc = bincode::encode_to_vec(vals, config)?;
+                            db.insert(&geohash_str, enc)?;
+                        }
+                    }
                 }
             }
         }
@@ -201,17 +289,8 @@ where
             nearests.push(nearest);
         }
         nearests.sort_by(|a, b| {
-            let c_point = query_point.point();
-            let a_point = a.point();
-            let b_point = b.point();
-            let a_distance: f64 = Haversine::distance(
-                geo::Point::new(a_point.0, a_point.1),
-                geo::Point::new(c_point.0, c_point.1),
-            );
-            let b_distance: f64 = Haversine::distance(
-                geo::Point::new(b_point.0, b_point.1),
-                geo::Point::new(c_point.0, c_point.1),
-            );
+            let a_distance = a.distance(query_point);
+            let b_distance = b.distance(query_point);
             a_distance
                 .partial_cmp(&b_distance)
                 .unwrap_or(Ordering::Equal)
@@ -247,6 +326,9 @@ where
         if let Some(rtree) = self.arc_dashmap.get(geohash_str) {
             let nearest = rtree.nearest_neighbor(&query_point.envelope().center());
             return Ok(nearest.cloned());
+        }
+        if *self.loaded.read().unwrap() {
+            return Ok(None);
         }
         if let Some(db) = &self.db {
             if let Some(data) = db.get(geohash_str)? {
