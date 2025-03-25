@@ -72,10 +72,6 @@ where
     arc_dashmap: Arc<DashMap<String, RTree<T>>>,
     geohash_precision: usize,
     db: Option<Arc<sled::Db>>,
-
-    /// A thread-safe boolean flag indicating whether the data structure has been loaded into memory.
-    /// Protected by a read-write lock for concurrent access.
-    loaded: Arc<RwLock<bool>>,
 }
 
 #[derive(Error, Debug)]
@@ -104,7 +100,6 @@ where
             arc_dashmap: Arc::new(DashMap::new()),
             geohash_precision,
             db: None,
-            loaded: Arc::new(RwLock::new(true)),
         };
         if let Some(persistence_path) = persistence_path {
             let db: sled::Db = sled::Config::default().path(persistence_path).open()?;
@@ -132,7 +127,6 @@ where
             arc_dashmap: Arc::new(DashMap::new()),
             geohash_precision,
             db: Some(Arc::new(db)),
-            loaded: Arc::new(RwLock::new(false)),
         };
 
         let config = bincode::config::standard();
@@ -149,7 +143,6 @@ where
             }
         }
 
-        *hrt.loaded.write().unwrap() = true;
         Ok(hrt)
     }
 
@@ -162,11 +155,8 @@ where
             arc_dashmap: Arc::new(DashMap::new()),
             geohash_precision,
             db: Some(Arc::new(db)),
-            loaded: Arc::new(RwLock::new(false)),
         };
-
         let acr_dashmap = Arc::clone(&hrt.arc_dashmap);
-        let arc_loaded = Arc::clone(&hrt.loaded);
 
         if let Some(db) = hrt.db.clone() {
             // Load the data from the persistence path
@@ -202,7 +192,6 @@ where
                         .insert(t);
                 }
 
-                *arc_loaded.write().unwrap() = true;
                 println!(
                     "loaded elapsed time: {:?}, total: {}",
                     now.elapsed().unwrap(),
