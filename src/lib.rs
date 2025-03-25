@@ -39,22 +39,9 @@ pub trait Point {
         )
     }
 }
-
-pub trait UniqueId: Clone {
-    fn unique_id(&self) -> String;
-}
-
 pub struct GeohashRTree<T>
 where
-    T: UniqueId
-        + Point
-        + RstarPoint
-        + Clone
-        + Send
-        + Sync
-        + bincode::Decode<()>
-        + bincode::Encode
-        + 'static,
+    T: Point + RstarPoint + Clone + Send + Sync + bincode::Decode<()> + bincode::Encode + 'static,
 {
     arc_dashmap: Arc<DashMap<String, RTree<T>>>,
     geohash_precision: usize,
@@ -81,7 +68,7 @@ pub enum GeohashRTreeError {
 
 impl<T> GeohashRTree<T>
 where
-    T: UniqueId + Point + RstarPoint + Clone + Send + Sync + bincode::Decode<()> + bincode::Encode,
+    T: Point + RstarPoint + Clone + Send + Sync + bincode::Decode<()> + bincode::Encode,
 {
     pub fn new(geohash_precision: usize, persistence_path: Option<PathBuf>) -> Self {
         let mut s = Self {
@@ -226,7 +213,7 @@ where
         Ok(())
     }
 
-    pub fn remove(&self, t: T) -> Result<(), GeohashRTreeError> {
+    pub fn remove(&self, t: &T) -> Result<Option<T>, GeohashRTreeError> {
         let lnglat = t.point();
         let geohash_str = encode(
             Coord {
@@ -236,16 +223,18 @@ where
             self.geohash_precision,
         )?;
 
+        let mut removed: Option<T> = None;
+
         // key founded
         if let Some(mut rtree) = self.arc_dashmap.get_mut(&geohash_str) {
-            rtree.remove(&t);
+            removed = rtree.remove(t);
         } else if !*self.loaded.read().unwrap() {
             if let Some(db) = &self.db {
                 if let Some(data) = db.get(&geohash_str)? {
                     let dec: (Vec<T>, _) =
                         bincode::decode_from_slice(&data, bincode::config::standard())?;
                     let mut rtree = RTree::bulk_load(dec.0);
-                    rtree.remove(&t);
+                    removed = rtree.remove(t);
                     self.arc_dashmap.insert(geohash_str.clone(), rtree);
                 }
             }
@@ -259,7 +248,7 @@ where
                 db.insert(&geohash_str, enc)?;
             }
         }
-        Ok(())
+        Ok(removed)
     }
 
     /// Finds the nearest neighbor to the given query point by searching in the current geohash cell
@@ -330,7 +319,7 @@ where
                 .partial_cmp(&b_distance)
                 .unwrap_or(Ordering::Equal)
         });
-        Ok(None)
+        Ok(nearests.first().cloned())
     }
 
     /// Retrieves the nearest point to the query point within a specific geohash cell.
@@ -465,12 +454,6 @@ mod tests {
         }
     }
 
-    impl UniqueId for Player {
-        fn unique_id(&self) -> String {
-            self.name.clone()
-        }
-    }
-
     impl RstarPoint for Player {
         type Scalar = f64;
         const DIMENSIONS: usize = 2;
@@ -501,7 +484,7 @@ mod tests {
     }
 
     #[test]
-    fn test_geohash_rtree() {
+    fn test_hash_rtree_insert() {
         let hrt: GeohashRTree<Player> = GeohashRTree::new(5, None);
         let players = vec![
             Player {
@@ -533,7 +516,71 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        println!("nearest: {:?}", nearest);
-        assert_eq!(players[0], nearest)
+        assert_eq!(players[0], nearest);
+    }
+
+    #[test]
+    fn test_hash_rtree_remove() {
+        let hrt: GeohashRTree<Player> = GeohashRTree::new(5, None);
+        let players = vec![
+            Player {
+                name: "1".into(),
+                x_coordinate: 116.400357,
+                y_coordinate: 39.906453,
+            },
+            Player {
+                name: "2".into(),
+                x_coordinate: 116.401633,
+                y_coordinate: 39.906302,
+            },
+            Player {
+                name: "3".into(),
+                x_coordinate: 116.401645,
+                y_coordinate: 39.904753,
+            },
+        ];
+        hrt.insert(players[0].clone()).unwrap();
+        hrt.insert(players[1].clone()).unwrap();
+        hrt.insert(players[2].clone()).unwrap();
+
+        assert_eq!(players[0], hrt.remove(&players[0]).unwrap().unwrap());
+        assert_eq!(players[1], hrt.remove(&players[1]).unwrap().unwrap());
+        assert_eq!(players[2], hrt.remove(&players[2]).unwrap().unwrap());
+    }
+
+    #[test]
+    fn test_hash_rtree_nearest_neighbor_2() {
+        let hrt: GeohashRTree<Player> = GeohashRTree::new(5, None);
+        let players = vec![
+            Player {
+                name: "1".into(),
+                x_coordinate: 116.400357,
+                y_coordinate: 39.906453,
+            },
+            Player {
+                name: "2".into(),
+                x_coordinate: 116.401633,
+                y_coordinate: 39.906302,
+            },
+            Player {
+                name: "3".into(),
+                x_coordinate: 116.401645,
+                y_coordinate: 39.904753,
+            },
+        ];
+        hrt.insert(players[0].clone()).unwrap();
+        hrt.insert(players[1].clone()).unwrap();
+        hrt.insert(players[2].clone()).unwrap();
+
+        let nearest = hrt
+            .nearest_neighbor_2(&Player {
+                name: "1".into(),
+                x_coordinate: 116.400357,
+                y_coordinate: 39.906453,
+            })
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(players[0], nearest);
     }
 }
