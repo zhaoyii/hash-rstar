@@ -130,7 +130,10 @@ where
         };
 
         let config = bincode::config::standard();
+       
+
         if let Some(db) = &hrt.db {
+            let now = SystemTime::now();
             let mut itr = db.iter();
             while let Some(entry) = itr.next() {
                 let (_, value) = entry?;
@@ -141,8 +144,12 @@ where
                     .or_insert(RTree::new())
                     .insert(t);
             }
+            println!(
+                "loaded elapsed time: {:?}, total: {}",
+                now.elapsed().unwrap(),
+                db.len()
+            );
         }
-
         Ok(hrt)
     }
 
