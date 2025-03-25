@@ -40,9 +40,34 @@ pub trait Point {
         )
     }
 }
+
+fn gen_geohash_str<T: Point>(geohash_precision: usize, t: &T) -> Result<String, GeohashRTreeError> {
+    let lnglat = t.point();
+    let geohash_str = encode(
+        Coord {
+            x: lnglat.0,
+            y: lnglat.1,
+        },
+        geohash_precision,
+    )?;
+    Ok(geohash_str)
+}
+
+pub trait Unique {
+    fn unique_id(&self) -> String;
+}
+
 pub struct GeohashRTree<T>
 where
-    T: Point + RstarPoint + Clone + Send + Sync + bincode::Decode<()> + bincode::Encode + 'static,
+    T: Unique
+        + Point
+        + RstarPoint
+        + Clone
+        + Send
+        + Sync
+        + bincode::Decode<()>
+        + bincode::Encode
+        + 'static,
 {
     arc_dashmap: Arc<DashMap<String, RTree<T>>>,
     geohash_precision: usize,
@@ -69,9 +94,12 @@ pub enum GeohashRTreeError {
 
 impl<T> GeohashRTree<T>
 where
-    T: Point + RstarPoint + Clone + Send + Sync + bincode::Decode<()> + bincode::Encode,
+    T: Unique + Point + RstarPoint + Clone + Send + Sync + bincode::Decode<()> + bincode::Encode,
 {
-    pub fn new(geohash_precision: usize, persistence_path: Option<PathBuf>) -> Self {
+    pub fn new(
+        geohash_precision: usize,
+        persistence_path: Option<PathBuf>,
+    ) -> Result<Self, GeohashRTreeError> {
         let mut s = Self {
             arc_dashmap: Arc::new(DashMap::new()),
             geohash_precision,
@@ -79,14 +107,10 @@ where
             loaded: Arc::new(RwLock::new(true)),
         };
         if let Some(persistence_path) = persistence_path {
-            let db: sled::Db = sled::Config::default()
-                .path(persistence_path)
-                .flush_every_ms(Some(10_000))
-                .open()
-                .unwrap();
+            let db: sled::Db = sled::Config::default().path(persistence_path).open()?;
             s.db = Some(Arc::new(db));
         }
-        s
+        Ok(s)
     }
 
     /// Loads a GeohashRTree from a persistence path with the specified geohash precision.
@@ -103,11 +127,7 @@ where
         geohash_precision: usize,
         persistence_path: PathBuf,
     ) -> Result<Self, GeohashRTreeError> {
-        let config = bincode::config::standard();
-        let db: sled::Db = sled::Config::default()
-            .path(persistence_path)
-            .flush_every_ms(Some(10_000))
-            .open()?;
+        let db: sled::Db = sled::Config::default().path(persistence_path).open()?;
         let hrt = Self {
             arc_dashmap: Arc::new(DashMap::new()),
             geohash_precision,
@@ -115,16 +135,17 @@ where
             loaded: Arc::new(RwLock::new(false)),
         };
 
+        let config = bincode::config::standard();
         if let Some(db) = &hrt.db {
-            // Load the data from the persistence path
             let mut itr = db.iter();
             while let Some(entry) = itr.next() {
-                let (geohash_key, value) = entry?;
-                let vals: Vec<T> = bincode::decode_from_slice(&value, config)?.0;
-                hrt.arc_dashmap.insert(
-                    geohash_key.escape_ascii().to_string(),
-                    RTree::bulk_load(vals.clone()),
-                );
+                let (_, value) = entry?;
+                let (t, _) = bincode::decode_from_slice::<T, _>(&value, config)?;
+                let geohash_str = gen_geohash_str(geohash_precision, &t)?;
+                hrt.arc_dashmap
+                    .entry(geohash_str)
+                    .or_insert(RTree::new())
+                    .insert(t);
             }
         }
 
@@ -136,10 +157,7 @@ where
         geohash_precision: usize,
         persistence_path: PathBuf,
     ) -> Result<Self, GeohashRTreeError> {
-        let db: sled::Db = sled::Config::default()
-            .path(persistence_path)
-            .flush_every_ms(Some(10_000))
-            .open()?;
+        let db: sled::Db = sled::Config::default().path(persistence_path).open()?;
         let hrt = Self {
             arc_dashmap: Arc::new(DashMap::new()),
             geohash_precision,
@@ -157,32 +175,38 @@ where
                 let mut itr = db.iter();
                 let now = SystemTime::now();
                 while let Some(entry) = itr.next() {
-                    let (geohash_key, value) = match entry {
-                        Ok((geohash_key, value)) => (geohash_key, value),
+                    let (_, value) = match entry {
+                        Ok((uid, value)) => (uid, value),
                         Err(e) => {
                             println!("error: {}", e);
                             return ();
                         }
                     };
-
-                    match bincode::decode_from_slice(&value, config) {
-                        Ok((vals, _)) => {
-                            acr_dashmap.insert(
-                                geohash_key.escape_ascii().to_string(),
-                                RTree::bulk_load(vals),
-                            );
-                        }
+                    let t = match bincode::decode_from_slice::<T, _>(&value, config) {
+                        Ok((t, _)) => t,
                         Err(e) => {
                             println!("error: {}", e);
+                            return ();
                         }
-                    }
+                    };
+                    let geohash_str = match gen_geohash_str(geohash_precision, &t) {
+                        Ok(h) => h,
+                        Err(e) => {
+                            println!("error: {}", e);
+                            return ();
+                        }
+                    };
+                    acr_dashmap
+                        .entry(geohash_str)
+                        .or_insert(RTree::new())
+                        .insert(t);
                 }
 
                 *arc_loaded.write().unwrap() = true;
                 println!(
-                    "loaded elapsed time: {:?}, total keys: {}",
+                    "loaded elapsed time: {:?}, total: {}",
                     now.elapsed().unwrap(),
-                    acr_dashmap.len()
+                    db.len()
                 );
             });
         }
@@ -191,82 +215,26 @@ where
     }
 
     pub fn insert(&self, t: T) -> Result<(), GeohashRTreeError> {
-        let lnglat = t.point();
-        let geohash_str = encode(
-            Coord {
-                x: lnglat.0,
-                y: lnglat.1,
-            },
-            self.geohash_precision,
-        )?;
-
-        // key founded
-        if let Some(mut rtree) = self.arc_dashmap.get_mut(&geohash_str) {
-            rtree.insert(t);
-        } else if *self.loaded.read().unwrap() {
-            // loaded but key not found
-            self.arc_dashmap
-                .insert(geohash_str.clone(), RTree::bulk_load(vec![t]));
-        } else {
-            // load from persistence db
-            if let Some(db) = &self.db {
-                if let Some(data) = db.get(&geohash_str)? {
-                    let dec: (Vec<T>, _) =
-                        bincode::decode_from_slice(&data, bincode::config::standard())?;
-                    let mut rtree = RTree::bulk_load(dec.0);
-                    rtree.insert(t);
-                    self.arc_dashmap.insert(geohash_str.clone(), rtree);
-                }
-            }
-        }
-
+        let geohash_str = gen_geohash_str(self.geohash_precision, &t)?;
         if let Some(db) = &self.db {
-            if let Some(rtree) = self.arc_dashmap.get_mut(&geohash_str) {
-                let mut vals: Vec<T> = Vec::with_capacity(rtree.size());
-                rtree.iter().for_each(|v| vals.push(v.clone()));
-                let enc = bincode::encode_to_vec(vals, bincode::config::standard())?;
-                db.insert(&geohash_str, enc)?;
-            }
+            let enc = bincode::encode_to_vec(&t, bincode::config::standard())?;
+            db.insert(t.unique_id(), enc)?;
         }
-
+        let mut rtree = self.arc_dashmap.entry(geohash_str).or_insert(RTree::new());
+        rtree.insert(t);
         Ok(())
     }
 
     pub fn remove(&self, t: &T) -> Result<Option<T>, GeohashRTreeError> {
-        let lnglat = t.point();
-        let geohash_str = encode(
-            Coord {
-                x: lnglat.0,
-                y: lnglat.1,
-            },
-            self.geohash_precision,
-        )?;
-
-        let mut removed: Option<T> = None;
-
-        // key founded
-        if let Some(mut rtree) = self.arc_dashmap.get_mut(&geohash_str) {
-            removed = rtree.remove(t);
-        } else if !*self.loaded.read().unwrap() {
-            if let Some(db) = &self.db {
-                if let Some(data) = db.get(&geohash_str)? {
-                    let dec: (Vec<T>, _) =
-                        bincode::decode_from_slice(&data, bincode::config::standard())?;
-                    let mut rtree = RTree::bulk_load(dec.0);
-                    removed = rtree.remove(t);
-                    self.arc_dashmap.insert(geohash_str.clone(), rtree);
-                }
-            }
-        }
-
+        let geohash_str = gen_geohash_str(self.geohash_precision, t)?;
         if let Some(db) = &self.db {
-            if let Some(rtree) = self.arc_dashmap.get_mut(&geohash_str) {
-                let mut vals: Vec<T> = Vec::with_capacity(rtree.size());
-                rtree.iter().for_each(|v| vals.push(v.clone()));
-                let enc = bincode::encode_to_vec(vals, bincode::config::standard())?;
-                db.insert(&geohash_str, enc)?;
-            }
+            db.remove(t.unique_id())?;
         }
+        let removed = if let Some(mut rtree) = self.arc_dashmap.get_mut(&geohash_str) {
+            rtree.remove(t)
+        } else {
+            None
+        };
         Ok(removed)
     }
 
@@ -370,20 +338,6 @@ where
             let nearest = rtree.nearest_neighbor(&query_point.envelope().center());
             return Ok(nearest.cloned());
         }
-        if *self.loaded.read().unwrap() {
-            return Ok(None);
-        }
-        if let Some(db) = &self.db {
-            if let Some(data) = db.get(geohash_str)? {
-                let config = bincode::config::standard();
-                let dec: (Vec<T>, _) = bincode::decode_from_slice(&data, config)?;
-                let rtree = RTree::bulk_load(dec.0);
-                let nearest = rtree.nearest_neighbor(&query_point.envelope().center());
-                let nearest = nearest.cloned();
-                self.arc_dashmap.insert(geohash_str.to_string(), rtree);
-                return Ok(nearest);
-            }
-        }
         Ok(None)
     }
 
@@ -473,6 +427,12 @@ mod tests {
         }
     }
 
+    impl Unique for Player {
+        fn unique_id(&self) -> String {
+            self.name.clone()
+        }
+    }
+
     impl RstarPoint for Player {
         type Scalar = f64;
         const DIMENSIONS: usize = 2;
@@ -504,7 +464,7 @@ mod tests {
 
     #[test]
     fn test_hash_rtree_insert() {
-        let hrt: GeohashRTree<Player> = GeohashRTree::new(5, None);
+        let hrt: GeohashRTree<Player> = GeohashRTree::new(5, None).unwrap();
         let players = vec![
             Player {
                 name: "1".into(),
@@ -540,7 +500,7 @@ mod tests {
 
     #[test]
     fn test_hash_rtree_remove() {
-        let hrt: GeohashRTree<Player> = GeohashRTree::new(5, None);
+        let hrt: GeohashRTree<Player> = GeohashRTree::new(5, None).unwrap();
         let players = vec![
             Player {
                 name: "1".into(),
@@ -569,7 +529,7 @@ mod tests {
 
     #[test]
     fn test_hash_rtree_nearest_neighbor_2() {
-        let hrt: GeohashRTree<Player> = GeohashRTree::new(5, None);
+        let hrt: GeohashRTree<Player> = GeohashRTree::new(5, None).unwrap();
         let players = vec![
             Player {
                 name: "1".into(),

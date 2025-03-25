@@ -22,6 +22,12 @@ impl Point for Player {
     }
 }
 
+impl Unique for Player {
+    fn unique_id(&self) -> String {
+        self.uid.clone()
+    }
+}
+
 impl RstarPoint for Player {
     type Scalar = f64;
     const DIMENSIONS: usize = 2;
