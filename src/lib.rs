@@ -3,11 +3,11 @@ use geo::{Distance, Haversine};
 use geohash::{Coord, encode};
 use rstar::{Envelope, RTree};
 use std::cmp::Ordering;
-use std::thread;
 use std::{
     path::PathBuf,
     sync::{Arc, RwLock},
 };
+use std::{thread, vec};
 use thiserror::Error;
 
 pub use rstar::Point as RstarPoint;
@@ -124,7 +124,6 @@ where
             while let Some(entry) = itr.next() {
                 let (geohash_key, value) = entry?;
                 let vals: Vec<T> = bincode::decode_from_slice(&value, config)?.0;
-                println!("length: {:?}", vals.len());
                 hrt.arc_dashmap.insert(
                     geohash_key.escape_ascii().to_string(),
                     RTree::bulk_load(vals.clone()),
@@ -148,6 +147,7 @@ where
         };
 
         let acr_dashmap = Arc::clone(&hrt.arc_dashmap);
+        let arc_loaded = Arc::clone(&hrt.loaded);
 
         if let Some(db) = hrt.db.clone() {
             // Load the data from the persistence path
@@ -176,6 +176,7 @@ where
                     }
                 }
 
+                *arc_loaded.write().unwrap() = true;
                 println!("loaded, len: {}", acr_dashmap.len());
             });
         }
@@ -193,43 +194,35 @@ where
             self.geohash_precision,
         )?;
 
-        if *self.loaded.read().unwrap() {
-            let mut rtree = self
-                .arc_dashmap
-                .entry(geohash_str.clone())
-                .or_insert_with(RTree::new);
+        // key founded
+        if let Some(mut rtree) = self.arc_dashmap.get_mut(&geohash_str) {
             rtree.insert(t);
-
-            if let Some(db) = &self.db {
-                let config = bincode::config::standard();
-                let mut vals: Vec<T> = Vec::with_capacity(rtree.size());
-                rtree.iter().for_each(|v| vals.push(v.clone()));
-                let enc = bincode::encode_to_vec(vals, config)?;
-                db.insert(&geohash_str, enc)?;
-            }
+        } else if *self.loaded.read().unwrap() {
+            // loaded but key not found
+            self.arc_dashmap
+                .insert(geohash_str.clone(), RTree::bulk_load(vec![t]));
         } else {
+            // load from persistence db
             if let Some(db) = &self.db {
                 if let Some(data) = db.get(&geohash_str)? {
-                    let config = bincode::config::standard();
-                    let dec: (Vec<T>, _) = bincode::decode_from_slice(&data, config)?;
+                    let dec: (Vec<T>, _) =
+                        bincode::decode_from_slice(&data, bincode::config::standard())?;
                     let mut rtree = RTree::bulk_load(dec.0);
                     rtree.insert(t);
-
-                    let mut vals: Vec<T> = Vec::with_capacity(rtree.size());
-                    rtree.iter().for_each(|v| vals.push(v.clone()));
-                    let enc = bincode::encode_to_vec(vals, config)?;
-                    db.insert(&geohash_str, enc)?;
-
-                    self.arc_dashmap.insert(geohash_str, rtree);
+                    self.arc_dashmap.insert(geohash_str.clone(), rtree);
                 }
-            } else {
-                let mut rtree = self
-                    .arc_dashmap
-                    .entry(geohash_str.clone())
-                    .or_insert_with(RTree::new);
-                rtree.insert(t);
             }
         }
+
+        if let Some(db) = &self.db {
+            if let Some(rtree) = self.arc_dashmap.get_mut(&geohash_str) {
+                let mut vals: Vec<T> = Vec::with_capacity(rtree.size());
+                rtree.iter().for_each(|v| vals.push(v.clone()));
+                let enc = bincode::encode_to_vec(vals, bincode::config::standard())?;
+                db.insert(&geohash_str, enc)?;
+            }
+        }
+
         Ok(())
     }
 
@@ -243,43 +236,27 @@ where
             self.geohash_precision,
         )?;
 
-        if *self.loaded.read().unwrap() {
-            if let Some(mut rtree) = self.arc_dashmap.get_mut(&geohash_str) {
-                if let Some(_) = rtree.remove(&t) {
-                    if let Some(db) = &self.db {
-                        let config = bincode::config::standard();
-                        let mut vals: Vec<T> = Vec::with_capacity(rtree.size());
-                        rtree.iter().for_each(|v| vals.push(v.clone()));
-                        let enc = bincode::encode_to_vec(vals, config)?;
-                        db.insert(&geohash_str, enc)?;
-                    }
-                }
-            }
-        } else {
+        // key founded
+        if let Some(mut rtree) = self.arc_dashmap.get_mut(&geohash_str) {
+            rtree.remove(&t);
+        } else if !*self.loaded.read().unwrap() {
             if let Some(db) = &self.db {
                 if let Some(data) = db.get(&geohash_str)? {
-                    let config = bincode::config::standard();
-                    let dec: (Vec<T>, _) = bincode::decode_from_slice(&data, config)?;
+                    let dec: (Vec<T>, _) =
+                        bincode::decode_from_slice(&data, bincode::config::standard())?;
                     let mut rtree = RTree::bulk_load(dec.0);
                     rtree.remove(&t);
+                    self.arc_dashmap.insert(geohash_str.clone(), rtree);
+                }
+            }
+        }
 
-                    let mut vals: Vec<T> = Vec::with_capacity(rtree.size());
-                    rtree.iter().for_each(|v| vals.push(v.clone()));
-                    let enc = bincode::encode_to_vec(vals, config)?;
-                    db.insert(&geohash_str, enc)?;
-                }
-            } else {
-                if let Some(mut rtree) = self.arc_dashmap.get_mut(&geohash_str) {
-                    if let Some(_) = rtree.remove(&t) {
-                        if let Some(db) = &self.db {
-                            let config = bincode::config::standard();
-                            let mut vals: Vec<T> = Vec::with_capacity(rtree.size());
-                            rtree.iter().for_each(|v| vals.push(v.clone()));
-                            let enc = bincode::encode_to_vec(vals, config)?;
-                            db.insert(&geohash_str, enc)?;
-                        }
-                    }
-                }
+        if let Some(db) = &self.db {
+            if let Some(rtree) = self.arc_dashmap.get_mut(&geohash_str) {
+                let mut vals: Vec<T> = Vec::with_capacity(rtree.size());
+                rtree.iter().for_each(|v| vals.push(v.clone()));
+                let enc = bincode::encode_to_vec(vals, bincode::config::standard())?;
+                db.insert(&geohash_str, enc)?;
             }
         }
         Ok(())
