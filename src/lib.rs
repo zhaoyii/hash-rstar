@@ -79,7 +79,12 @@ where
             loaded: Arc::new(RwLock::new(true)),
         };
         if let Some(persistence_path) = persistence_path {
-            s.db = Some(Arc::new(sled::open(persistence_path).unwrap()));
+            let db: sled::Db = sled::Config::default()
+                .path(persistence_path)
+                .flush_every_ms(Some(10_000))
+                .open()
+                .unwrap();
+            s.db = Some(Arc::new(db));
         }
         s
     }
@@ -99,10 +104,14 @@ where
         persistence_path: PathBuf,
     ) -> Result<Self, GeohashRTreeError> {
         let config = bincode::config::standard();
+        let db: sled::Db = sled::Config::default()
+            .path(persistence_path)
+            .flush_every_ms(Some(10_000))
+            .open()?;
         let hrt = Self {
             arc_dashmap: Arc::new(DashMap::new()),
             geohash_precision,
-            db: Some(Arc::new(sled::open(persistence_path)?)),
+            db: Some(Arc::new(db)),
             loaded: Arc::new(RwLock::new(false)),
         };
 
@@ -127,10 +136,14 @@ where
         geohash_precision: usize,
         persistence_path: PathBuf,
     ) -> Result<Self, GeohashRTreeError> {
+        let db: sled::Db = sled::Config::default()
+            .path(persistence_path)
+            .flush_every_ms(Some(10_000))
+            .open()?;
         let hrt = Self {
             arc_dashmap: Arc::new(DashMap::new()),
             geohash_precision,
-            db: Some(Arc::new(sled::open(persistence_path)?)),
+            db: Some(Arc::new(db)),
             loaded: Arc::new(RwLock::new(false)),
         };
 
