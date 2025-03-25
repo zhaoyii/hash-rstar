@@ -6,7 +6,7 @@ use std::cmp::Ordering;
 use std::time::SystemTime;
 use std::{
     path::PathBuf,
-    sync::{Arc, RwLock},
+    sync::Arc,
 };
 use std::{thread, vec};
 use thiserror::Error;
