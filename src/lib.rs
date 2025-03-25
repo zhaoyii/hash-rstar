@@ -4,10 +4,7 @@ use geohash::{Coord, encode};
 use rstar::{Envelope, RTree};
 use std::cmp::Ordering;
 use std::time::SystemTime;
-use std::{
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 use std::{thread, vec};
 use thiserror::Error;
 
@@ -130,7 +127,6 @@ where
         };
 
         let config = bincode::config::standard();
-       
 
         if let Some(db) = &hrt.db {
             let now = SystemTime::now();
