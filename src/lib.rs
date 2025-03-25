@@ -3,6 +3,7 @@ use geo::{Distance, Haversine};
 use geohash::{Coord, encode};
 use rstar::{Envelope, RTree};
 use std::cmp::Ordering;
+use std::time::SystemTime;
 use std::{
     path::PathBuf,
     sync::{Arc, RwLock},
@@ -141,6 +142,7 @@ where
             thread::spawn(move || {
                 let config = bincode::config::standard();
                 let mut itr = db.iter();
+                let now = SystemTime::now();
                 while let Some(entry) = itr.next() {
                     let (geohash_key, value) = match entry {
                         Ok((geohash_key, value)) => (geohash_key, value),
@@ -164,7 +166,11 @@ where
                 }
 
                 *arc_loaded.write().unwrap() = true;
-                println!("loaded, len: {}", acr_dashmap.len());
+                println!(
+                    "loaded elapsed time: {:?}, total keys: {}",
+                    now.elapsed().unwrap(),
+                    acr_dashmap.len()
+                );
             });
         }
 
