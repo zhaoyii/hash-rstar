@@ -127,18 +127,26 @@ async fn main() {
 }
 
 fn parse_lonlat(lonlat: &str) -> Result<(f64, f64), String> {
-    let mut lonlat = lonlat.split(',');
-    let lon = lonlat.nth(0);
-    let lat = lonlat.nth(1);
-    if lon.is_none() || lat.is_none() {
-        return Err("lonlat is not valid".to_string());
+    let mut parts = lonlat.split(',');
+    match (parts.next(), parts.next()) {
+        (Some(lon), Some(lat)) => {
+            let lon = lon
+                .parse::<f64>()
+                .map_err(|e| format!("Invalid longitude: {}, {}", lon, e.to_string()))?;
+            let lat = lat
+                .parse::<f64>()
+                .map_err(|e| format!("Invalid latitude: {}, {}", lat, e.to_string()))?;
+            if (-180.0..=180.0).contains(&lon) && (-90.0..=90.0).contains(&lat) {
+                Ok((lon, lat))
+            } else {
+                Err(format!(
+                    "Coordinates out of range: longitude {}, latitude {}",
+                    lon, lat
+                ))
+            }
+        }
+        _ => Err(format!("Invalid lonlat format: {}", lonlat)),
     }
-    let lon = lon.unwrap().parse::<f64>().map_err(|e| e.to_string())?;
-    let lat = lat.unwrap().parse::<f64>().map_err(|e| e.to_string())?;
-    if lon > 180.0 || lon < -180.0 || lat > 90.0 || lat < -90.0 {
-        return Err("lonlat is not valid".to_string());
-    }
-    Ok((lon, lat))
 }
 
 async fn nearest(
