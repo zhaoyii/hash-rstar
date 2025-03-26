@@ -3,7 +3,7 @@ use geohash::{decode_bbox, encode, neighbors};
 use std::cmp::Ordering;
 
 /// 计算点到直线的垂足
-fn get_foot_point(point: &Point<f64>, line: &Line<f64>) -> Point<f64> {
+fn calculate_perpendicular_point(point: &Point<f64>, line: &Line<f64>) -> Point<f64> {
     let start = line.start;
     let end = line.end;
 
@@ -36,11 +36,11 @@ fn get_foot_point(point: &Point<f64>, line: &Line<f64>) -> Point<f64> {
 }
 
 fn distance_to_line(point: &Point<f64>, line: &Line<f64>) -> f64 {
-    let destination = get_foot_point(point, line);
+    let destination = calculate_perpendicular_point(point, line);
     Haversine::distance(point.clone(), destination)
 }
 
-fn min_distance_with_coord(
+fn find_nearest_point_distance(
     geohash_str: &str,
     point: &Point<f64>,
 ) -> Result<(Coord, f64), crate::GeohashRTreeError> {
@@ -97,17 +97,17 @@ pub enum Direction {
 /// # Errors
 ///
 /// Returns `GeohashRTreeError` if geohash operations fail.
-pub fn sort_geohash_cells_by_min_distance(
+pub fn sort_geohash_neighbors(
     point: Point<f64>,
     geohash_precision: usize,
 ) -> Result<Vec<(String, f64, Direction)>, crate::GeohashRTreeError> {
     let geohash_str = encode(Coord::from(point), geohash_precision)?;
     let nbs = neighbors(&geohash_str)?;
 
-    let ne = min_distance_with_coord(&nbs.ne, &point)?;
-    let se = min_distance_with_coord(&nbs.se, &point)?;
-    let nw = min_distance_with_coord(&nbs.nw, &point)?;
-    let sw: (Coord, f64) = min_distance_with_coord(&nbs.sw, &point)?;
+    let ne = find_nearest_point_distance(&nbs.ne, &point)?;
+    let se = find_nearest_point_distance(&nbs.se, &point)?;
+    let nw = find_nearest_point_distance(&nbs.nw, &point)?;
+    let sw: (Coord, f64) = find_nearest_point_distance(&nbs.sw, &point)?;
     let e = distance_to_line(&point, &Line::new(ne.0.clone(), se.0.clone()));
     let s = distance_to_line(&point, &Line::new(se.0.clone(), sw.0.clone()));
     let w = distance_to_line(&point, &Line::new(nw.0.clone(), sw.0.clone()));
@@ -132,42 +132,41 @@ pub fn sort_geohash_cells_by_min_distance(
 
 #[cfg(test)]
 mod tests {
-    use std::time::SystemTime;
 
     use super::*;
     use geo::{Line, Point};
 
     #[test]
-    fn test_foot_point() {
+    fn test_perpendicular_point() {
         // 测试水平线
         let point = Point::new(1.0, 1.0);
         let line = Line::new(Point::new(0.0, 0.0), Point::new(2.0, 0.0));
-        let foot = get_foot_point(&point, &line);
+        let foot = calculate_perpendicular_point(&point, &line);
         assert!((foot.x() - 1.0).abs() < f64::EPSILON);
         assert!(foot.y().abs() < f64::EPSILON);
 
         // 测试垂直线
         let point2 = Point::new(1.0, 1.0);
         let line2 = Line::new(Point::new(0.0, 0.0), Point::new(0.0, 2.0));
-        let foot2 = get_foot_point(&point2, &line2);
+        let foot2 = calculate_perpendicular_point(&point2, &line2);
         assert!(foot2.x().abs() < f64::EPSILON);
         assert!((foot2.y() - 1.0).abs() < f64::EPSILON);
 
         // 测试45度斜线
         let point3 = Point::new(0.0, 1.0);
         let line3 = Line::new(Point::new(0.0, 0.0), Point::new(1.0, 1.0));
-        let foot3 = get_foot_point(&point3, &line3);
+        let foot3 = calculate_perpendicular_point(&point3, &line3);
         assert!((foot3.x() - 0.5).abs() < f64::EPSILON);
         assert!((foot3.y() - 0.5).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn test_sort_neighbors_by_min_distance() {
-        let now = SystemTime::now();
+    fn test_sort_geohash_neighbors() {
         let point = Point::new(114.432292, 30.545003);
         let geohash_precision = 5usize;
-        let neighbors = sort_geohash_cells_by_min_distance(point, geohash_precision).unwrap();
-        println!("{:?}", neighbors);
-        println!("{} nanos", now.elapsed().unwrap().as_nanos())
+        let neighbors = sort_geohash_neighbors(point, geohash_precision).unwrap();
+        assert_eq!(neighbors[0], ("wt3mg".into(), 0.0, Direction::C));
+        assert_eq!(neighbors.last().unwrap().0, "wt3q4");
+        assert_eq!(neighbors.last().unwrap().2, Direction::NW);
     }
 }
