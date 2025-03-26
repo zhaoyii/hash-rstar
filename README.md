@@ -19,7 +19,84 @@ By combining hash indexing with the R* tree, a Rust-based implementation achieve
 - **Persistence with Lazy Loading**: Supports data persistence and efficient lazy loading mechanisms.
 - **Thread-Safe**: Ensures thread-safe, highly efficient concurrent map operations.
 
-### Usage
+## Usage
+
+```rust
+use hash_rstar::{GeohashRTree, Point, Unique, RstarPoint};
+
+// Define your point type
+#[derive(Clone)]
+struct Location {
+    id: String,
+    lat: f64,
+    lon: f64,
+}
+
+// Implement Point trait for geographic coordinates
+impl Point for Location {
+    fn point(&self) -> (f64, f64) {
+        (self.lon, self.lat)
+    }
+}
+
+// Implement Unique trait for persistence
+impl Unique for Location {
+    fn unique_id(&self) -> String {
+        self.id.clone()
+    }
+}
+
+// Implement RstarPoint trait for R-tree operations
+impl RstarPoint for Location {
+    type Scalar = f64;
+    const DIMENSIONS: usize = 2;
+
+    fn generate(mut generator: impl FnMut(usize) -> Self::Scalar) -> Self {
+        Location {
+            id: "X".to_string(),
+            lon: generator(0),
+            lat: generator(1),
+        }
+    }
+
+    fn nth(&self, index: usize) -> Self::Scalar {
+        match index {
+            0 => self.lon,
+            1 => self.lat,
+            _ => unreachable!(),
+        }
+    }
+
+    fn nth_mut(&mut self, index: usize) -> &mut Self::Scalar {
+        match index {
+            0 => &mut self.lon,
+            1 => &mut self.lat,
+            _ => unreachable!(),
+        }
+    }
+}
+
+// Create and use the spatial index
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create new index with geohash precision 6
+    let tree = GeohashRTree::new(6, None)?;
+
+    // Insert points
+    let point = Location {
+        id: "1".into(),
+        lon: 116.400357,
+        lat: 39.906453,
+    };
+    tree.insert(point.clone())?;
+
+    // Find nearest neighbor
+    if let Some(nearest) = tree.adjacent_cells_nearest(&point)? {
+        println!("Found nearest point: {:?}", nearest);
+    }
+    
+    Ok(())
+}
+```
 
 ## Key Technologies
 
