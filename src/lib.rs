@@ -405,6 +405,21 @@ where
         Ok(removed)
     }
 
+    /// use only db exist
+    pub fn delete(&self, id: &str) -> Result<Option<T>, GeohashRTreeError> {
+        if let Some(db) = &self.db {
+            if let Some(rm) = db.remove(id)? {
+                let (t, _) = bincode::decode_from_slice::<T, _>(&rm, bincode::config::standard())?;
+                let geohash_str = t.gen_geohash_str(self.geohash_precision)?;
+                if let Some(mut rtree) = self.arc_dashmap.get_mut(&geohash_str) {
+                    let _ = rtree.remove(&t);
+                }
+                return Ok(Some(t));
+            }
+        }
+        Ok(None)
+    }
+
     /// Finds the nearest neighbor by searching in adjacent geohash cells.
     ///
     /// This method searches for the nearest neighbor in the current geohash cell and its 8 adjacent cells.
@@ -544,8 +559,7 @@ where
     pub fn sorted_cells_nearest(&self, query_point: &T) -> Result<Option<T>, GeohashRTreeError> {
         let lnglat = query_point.point();
         let point = geo::point!(x: lnglat.0, y: lnglat.1);
-        let sorted_geohash_cells =
-            utils::sort_geohash_neighbors(point, self.geohash_precision)?;
+        let sorted_geohash_cells = utils::sort_geohash_neighbors(point, self.geohash_precision)?;
 
         for s in sorted_geohash_cells.iter().enumerate() {
             if let Some(nearest) = self.nearest(query_point, &s.1.0)? {
