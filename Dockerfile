@@ -32,5 +32,8 @@ FROM debian:bookworm-slim AS runtime
 WORKDIR /app
 # 从构建阶段复制二进制文件
 COPY --from=builder /app/target/release/hash_rstar /app/hash_rstar
+
+EXPOSE 3000
+
 # 设置启动命令
 ENTRYPOINT ["/app/hash_rstar"]
