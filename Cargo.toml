@@ -2,6 +2,13 @@
 name = "hash_rstar"
 version = "0.1.0"
 edition = "2024"
+authors = ["Zhaoyii <532708564@QQ.com>"]
+description = "A concurrent spatial index combining geohash and R-tree data structures for efficient geographic point queries."
+license = "MIT"
+repository = "https://github.com/zhaoyii/hash-rstar"
+keywords = ["rust", "spatial", "geohash", "rstar", "r-tree", "spatial-indexing"]
+categories = ["algorithms", "data-structures", "geospatial"]
+readme = "README.md"
 
 [dependencies]
 bincode = "2.0.1"
