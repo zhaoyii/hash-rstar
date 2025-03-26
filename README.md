@@ -19,11 +19,7 @@ By combining hash indexing with the R* tree, a Rust-based implementation achieve
 - **Persistence with Lazy Loading**: Supports data persistence and efficient lazy loading mechanisms.
 - **Thread-Safe**: Ensures thread-safe, highly efficient concurrent map operations.
 
-### Installation
-
 ### Usage
-
-### Contributing
 
 ## Key Technologies
 
@@ -34,3 +30,4 @@ By combining hash indexing with the R* tree, a Rust-based implementation achieve
 - **`sled` (v0.34.7)**: Offers reliable and performant embedded database persistence.
 
 ### License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
