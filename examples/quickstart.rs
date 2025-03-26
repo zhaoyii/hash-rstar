@@ -22,6 +22,12 @@ impl Point for Player {
     }
 }
 
+impl Unique for Player {
+    fn unique_id(&self) -> String {
+        self.uid.clone()
+    }
+}
+
 impl RstarPoint for Player {
     type Scalar = f64;
     const DIMENSIONS: usize = 2;
@@ -53,10 +59,10 @@ impl RstarPoint for Player {
 }
 
 fn main() {
-    let mut rdr = csv::Reader::from_reader(
-        File::open("C:\\Users\\admin\\Desktop\\baidu_pois\\data3\\浙江+港澳.csv").unwrap(),
-    );
-    let hrt: GeohashRTree<Player> = GeohashRTree::load_async(
+    // let mut rdr = csv::Reader::from_reader(
+    //     File::open("C:\\Users\\admin\\Desktop\\baidu_pois\\data3\\浙江+港澳.csv").unwrap(),
+    // );
+    let hrt: GeohashRTree<Player> = GeohashRTree::load(
         5,
         PathBuf::from("C:\\Users\\admin\\Desktop\\baidu_pois\\hash_rtree\\hash_rtree_db"),
     )
@@ -64,20 +70,20 @@ fn main() {
 
     let now = SystemTime::now();
 
-    let mut count = 0;
-    for result in rdr.deserialize() {
-        let record: Player = result.unwrap();
-        hrt.insert(record).unwrap();
-        count += 1;
-        if count % 10000 == 0 {
-            println!(
-                "load time: {:?}, len {} ",
-                now.elapsed().unwrap(),
-                hrt.len()
-            );
-            println!("load {} records", count);
-        }
-    }
+    // let mut count = 0;
+    // for result in rdr.deserialize() {
+    //     let record: Player = result.unwrap();
+    //     hrt.insert(record).unwrap();
+    //     count += 1;
+    //     if count % 10000 == 0 {
+    //         println!(
+    //             "load time: {:?}, len {} ",
+    //             now.elapsed().unwrap(),
+    //             hrt.len()
+    //         );
+    //         println!("load {} records", count);
+    //     }
+    // }
 
     println!(
         "load time: {:?}, len {} ",
