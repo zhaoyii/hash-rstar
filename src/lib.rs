@@ -545,7 +545,7 @@ where
         let lnglat = query_point.point();
         let point = geo::point!(x: lnglat.0, y: lnglat.1);
         let sorted_geohash_cells =
-            utils::sort_geohash_cells_by_min_distance(point, self.geohash_precision)?;
+            utils::sort_geohash_neighbors(point, self.geohash_precision)?;
 
         for s in sorted_geohash_cells.iter().enumerate() {
             if let Some(nearest) = self.nearest(query_point, &s.1.0)? {
