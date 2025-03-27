@@ -40,12 +40,12 @@ use tower_http::cors::{Any, CorsLayer};
 struct Location {
     id: String,
     name: String,
-    lon_lat: (f64, f64),
+    lon_lat: (f32, f32),
     extra: Option<HashMap<String, String>>,
 }
 
 impl Point for Location {
-    fn point(&self) -> (f64, f64) {
+    fn point(&self) -> (f32, f32) {
         self.lon_lat
     }
 }
@@ -57,7 +57,7 @@ impl Unique for Location {
 }
 
 impl RstarPoint for Location {
-    type Scalar = f64;
+    type Scalar = f32;
     const DIMENSIONS: usize = 2;
 
     fn generate(mut generator: impl FnMut(usize) -> Self::Scalar) -> Self {
@@ -126,15 +126,15 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-fn parse_lonlat(lonlat: &str) -> Result<(f64, f64), String> {
+fn parse_lonlat(lonlat: &str) -> Result<(f32, f32), String> {
     let mut parts = lonlat.split(',');
     match (parts.next(), parts.next()) {
         (Some(lon), Some(lat)) => {
             let lon = lon
-                .parse::<f64>()
+                .parse::<f32>()
                 .map_err(|e| format!("Invalid longitude: {}, {}", lon, e.to_string()))?;
             let lat = lat
-                .parse::<f64>()
+                .parse::<f32>()
                 .map_err(|e| format!("Invalid latitude: {}, {}", lat, e.to_string()))?;
             if (-180.0..=180.0).contains(&lon) && (-90.0..=90.0).contains(&lat) {
                 Ok((lon, lat))

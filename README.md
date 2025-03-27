@@ -28,13 +28,13 @@ use hash_rstar::{GeohashRTree, Point, Unique, RstarPoint};
 #[derive(Clone)]
 struct Location {
     id: String,
-    lat: f64,
-    lon: f64,
+    lat: f32,
+    lon: f32,
 }
 
 // Implement Point trait for geographic coordinates
 impl Point for Location {
-    fn point(&self) -> (f64, f64) {
+    fn point(&self) -> (f32, f32) {
         (self.lon, self.lat)
     }
 }
@@ -48,7 +48,7 @@ impl Unique for Location {
 
 // Implement RstarPoint trait for R-tree operations
 impl RstarPoint for Location {
-    type Scalar = f64;
+    type Scalar = f32;
     const DIMENSIONS: usize = 2;
 
     fn generate(mut generator: impl FnMut(usize) -> Self::Scalar) -> Self {

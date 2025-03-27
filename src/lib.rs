@@ -22,13 +22,13 @@
 //! #[derive(Clone)]
 //! struct Location {
 //!     id: String,
-//!     lat: f64,
-//!     lon: f64,
+//!     lat: f32,
+//!     lon: f32,
 //! }
 //!
 //! // Implement Point trait for geographic coordinates
 //! impl Point for Location {
-//!     fn point(&self) -> (f64, f64) {
+//!     fn point(&self) -> (f32, f32) {
 //!         (self.lon, self.lat)
 //!     }
 //! }
@@ -42,7 +42,7 @@
 //!
 //! // Implement RstarPoint trait for R-tree operations
 //! impl RstarPoint for Location {
-//!     type Scalar = f64;
+//!     type Scalar = f32;
 //!     const DIMENSIONS: usize = 2;
 //!
 //!     fn generate(mut generator: impl FnMut(usize) -> Self::Scalar) -> Self {
@@ -163,12 +163,12 @@ mod utils;
 /// use hash_rstar::Point;
 ///
 /// struct Location {
-///     lat: f64,
-///     lon: f64,
+///     lat: f32,
+///     lon: f32,
 /// }
 ///
 /// impl Point for Location {
-///     fn point(&self) -> (f64, f64) {
+///     fn point(&self) -> (f32, f32) {
 ///         (self.lon, self.lat)
 ///     }
 /// }
@@ -178,8 +178,8 @@ pub trait Point: RstarPoint {
     ///
     /// # Returns
     ///
-    /// * `(f64, f64)` - A tuple where the first element is the x-coordinate and the second element is the y-coordinate
-    fn point(&self) -> (f64, f64);
+    /// * `(f32, f32)` - A tuple where the first element is the x-coordinate and the second element is the y-coordinate
+    fn point(&self) -> (f32, f32);
 
     /// Calculates the Haversine distance between two points on Earth's surface.
     ///
@@ -196,7 +196,10 @@ pub trait Point: RstarPoint {
     fn distance(&self, other: &Self) -> f64 {
         let (x, y) = self.point();
         let (other_x, other_y) = other.point();
-        Haversine::distance(geo::Point::new(x, y), geo::Point::new(other_x, other_y))
+        Haversine::distance(
+            geo::Point::new(x as f64, y as f64),
+            geo::Point::new(other_x as f64, other_y as f64),
+        )
     }
 
     /// Generates a geohash string representation of the point with specified precision.
@@ -209,7 +212,13 @@ pub trait Point: RstarPoint {
     /// * `Err(GeohashRTreeError)` - If geohash encoding fails
     fn gen_geohash_str(&self, geohash_precision: usize) -> Result<String, GeohashRTreeError> {
         let (x, y) = self.point();
-        let geohash_str = encode(Coord { x, y }, geohash_precision)?;
+        let geohash_str = encode(
+            Coord {
+                x: x as f64,
+                y: y as f64,
+            },
+            geohash_precision,
+        )?;
         Ok(geohash_str)
     }
 }
@@ -264,6 +273,8 @@ impl<T> GeohashRTree<T>
 where
     T: Unique + Point + Clone + Send + Sync + bincode::Decode<()> + bincode::Encode,
 {
+    const DEFAULT_SLED_CACHE_CAPACITY: u64 = 1024 * 1024 * 100; // 100M
+
     pub fn new(
         geohash_precision: usize,
         persistence_path: Option<PathBuf>,
@@ -274,7 +285,10 @@ where
             db: None,
         };
         if let Some(persistence_path) = persistence_path {
-            let db: sled::Db = sled::Config::default().path(persistence_path).open()?;
+            let db: sled::Db = sled::Config::default()
+                .cache_capacity(Self::DEFAULT_SLED_CACHE_CAPACITY)
+                .path(persistence_path)
+                .open()?;
             s.db = Some(Arc::new(db));
         }
         Ok(s)
@@ -294,7 +308,10 @@ where
         geohash_precision: usize,
         persistence_path: PathBuf,
     ) -> Result<Self, GeohashRTreeError> {
-        let db: sled::Db = sled::Config::default().path(persistence_path).open()?;
+        let db: sled::Db = sled::Config::default()
+            .cache_capacity(Self::DEFAULT_SLED_CACHE_CAPACITY)
+            .path(persistence_path)
+            .open()?;
         let hrt = Self {
             arc_dashmap: Arc::new(DashMap::new()),
             geohash_precision,
@@ -328,7 +345,10 @@ where
         geohash_precision: usize,
         persistence_path: PathBuf,
     ) -> Result<Self, GeohashRTreeError> {
-        let db: sled::Db = sled::Config::default().path(persistence_path).open()?;
+        let db: sled::Db = sled::Config::default()
+            .cache_capacity(Self::DEFAULT_SLED_CACHE_CAPACITY)
+            .path(persistence_path)
+            .open()?;
         let hrt = Self {
             arc_dashmap: Arc::new(DashMap::new()),
             geohash_precision,
@@ -457,8 +477,8 @@ where
         let lnglat = query_point.point();
         let geohash_str = encode(
             Coord {
-                x: lnglat.0,
-                y: lnglat.1,
+                x: lnglat.0 as f64,
+                y: lnglat.1 as f64,
             },
             self.geohash_precision,
         )?;
@@ -558,7 +578,7 @@ where
     /// - Large search areas need to be covered
     pub fn sorted_cells_nearest(&self, query_point: &T) -> Result<Option<T>, GeohashRTreeError> {
         let lnglat = query_point.point();
-        let point = geo::point!(x: lnglat.0, y: lnglat.1);
+        let point = geo::point!(x: lnglat.0 as f64, y: lnglat.1 as f64);
         let sorted_geohash_cells = utils::sort_geohash_neighbors(point, self.geohash_precision)?;
 
         for s in sorted_geohash_cells.iter().enumerate() {
@@ -570,7 +590,10 @@ where
                     return Ok(Some(nearest));
                 }
 
-                let dist = Haversine::distance(point, geo::point!(x: nearest_p.0, y: nearest_p.1));
+                let dist = Haversine::distance(
+                    point,
+                    geo::point!(x: nearest_p.0 as f64, y: nearest_p.1 as f64),
+                );
                 if dist <= sorted_geohash_cells[s.0 + 1].1 {
                     return Ok(Some(nearest));
                 }
@@ -593,12 +616,12 @@ mod tests {
     #[derive(Clone, PartialEq, Debug, Encode, Decode)]
     struct Location {
         name: String,
-        x_coordinate: f64,
-        y_coordinate: f64,
+        x_coordinate: f32,
+        y_coordinate: f32,
     }
 
     impl Point for Location {
-        fn point(&self) -> (f64, f64) {
+        fn point(&self) -> (f32, f32) {
             (self.x_coordinate, self.y_coordinate)
         }
     }
@@ -610,7 +633,7 @@ mod tests {
     }
 
     impl RstarPoint for Location {
-        type Scalar = f64;
+        type Scalar = f32;
         const DIMENSIONS: usize = 2;
 
         fn generate(mut generator: impl FnMut(usize) -> Self::Scalar) -> Self {
