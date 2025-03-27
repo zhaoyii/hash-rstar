@@ -27,7 +27,7 @@ Run the container with the following command:
 ```bash
 docker run -d \
   -p 3000:3000 \
-  -e HASH_RSTAR_DB=/data/hash_rstar.db \
+  -e HASH_RSTAR_DB=/var/lib/hash-rstar/data \
   -e HASH_RSTAR_GEOHASH_PRECISION=5 \
   -v /path/to/local/data:/var/lib/hash-rstar/data \
   zhaoyii/hash-rstar:latest
