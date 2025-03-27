@@ -1,14 +1,22 @@
 #!/bin/bash
 set -e
 
+# Extract the version number from the Cargo.toml file
+# The sed command searches for a line starting with "version ="
+# and captures the version string enclosed in double quotes
 VERSION=$(sed -n '/^version\s*=/ s/.*"\(.*\)".*/\1/p' Cargo.toml)
 echo "The version is:$VERSION"
 
-# 检查是否提供了构建模式参数，默认为 -beta 表示 debug 构建
+# Check if a build mode parameter is provided, default is -beta indicating a debug build
 DOCKER_TAG="${VERSION}-beta"
 if [ "$1" == "release" ]; then
     DOCKER_TAG="${VERSION}"
 fi
 
-# 构建 Docker 镜像
+# Build the Docker image
 docker build -t "hash-rstar:${DOCKER_TAG}" .
+
+# Tag the current version as latest
+if [ "$1" == "release" ]; then
+    docker tag "hash-rstar:${DOCKER_TAG}" "hash-rstar:latest"
+fi
