@@ -57,13 +57,13 @@ curl -X POST \
       "id": "1",
       "name": "Location1",
       "lon_lat": [-73.935242, 40.730610],
-      "extra": {"type": "park", "rating": 4.5}
+      "extra": {"type": "park", "rating": "4.5"}
     },
     {
       "id": "2",
       "name": "Location2",
       "lon_lat": [-73.955242, 40.750610],
-      "extra": {"type": "restaurant", "rating": 4.0}
+      "extra": {"type": "restaurant", "rating": "4.0"}
     }
   ]' 
 ```
