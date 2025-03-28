@@ -30,7 +30,8 @@ use axum::{
 };
 
 use bincode::{Decode, Encode};
-use hash_rstar::{GeohashRTree, Point, RstarPoint, Unique};
+use geo::{Distance, Haversine};
+use hash_rstar::{AABB, GeohashRTree, GeohashRTreeObject, PointDistance, RTreeObject};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::{collections::HashMap, sync::Arc};
@@ -44,48 +45,32 @@ struct Location {
     extra: Option<HashMap<String, String>>,
 }
 
-impl Point for Location {
-    fn point(&self) -> (f32, f32) {
-        self.lon_lat
-    }
-}
-
-impl Unique for Location {
+impl GeohashRTreeObject for Location {
     fn unique_id(&self) -> String {
         self.id.clone()
     }
-}
 
-impl RstarPoint for Location {
-    type Scalar = f32;
-    const DIMENSIONS: usize = 2;
-
-    fn generate(mut generator: impl FnMut(usize) -> Self::Scalar) -> Self {
-        Location {
-            id: "".to_string(),
-            name: "".to_string(),
-            lon_lat: (generator(0), generator(1)),
-            extra: None,
-        }
-    }
-
-    fn nth(&self, index: usize) -> Self::Scalar {
-        match index {
-            0 => self.lon_lat.0,
-            1 => self.lon_lat.1,
-            _ => unreachable!(),
-        }
-    }
-
-    fn nth_mut(&mut self, index: usize) -> &mut Self::Scalar {
-        match index {
-            0 => &mut self.lon_lat.0,
-            1 => &mut self.lon_lat.1,
-            _ => unreachable!(),
-        }
+    fn x_y(&self) -> (f64, f64) {
+        (f64::from(self.lon_lat.0), f64::from(self.lon_lat.1))
     }
 }
 
+impl RTreeObject for Location {
+    type Envelope = AABB<[f32; 2]>;
+
+    fn envelope(&self) -> Self::Envelope {
+        AABB::from_point([self.lon_lat.0, self.lon_lat.1])
+    }
+}
+
+// Implement PointDistance for Player
+impl PointDistance for Location {
+    fn distance_2(&self, point: &[f32; 2]) -> f32 {
+        let self_geo_point = geo::point!(x: self.lon_lat.0, y: self.lon_lat.1);
+        let target_geo_point = geo::point!(x: point[0], y: point[1]);
+        Haversine::distance(self_geo_point, target_geo_point)
+    }
+}
 struct AppState {
     hash_rtree: GeohashRTree<Location>,
 }

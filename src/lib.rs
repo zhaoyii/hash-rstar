@@ -147,60 +147,24 @@ use std::{path::PathBuf, sync::Arc};
 use std::{thread, vec};
 use thiserror::Error;
 
-pub use rstar::Point as RstarPoint;
-pub use rstar::RTreeObject;
+pub use rstar::{AABB, PointDistance, RTreeObject};
 
 mod utils;
 
-/// A trait for types that can represent a point in geographic coordinates.
-///
-/// This trait provides functionality for working with geographic points,
-/// including methods to get coordinates and calculate distances between points.
-///
-/// # Examples
-///
-/// ```
-/// use hash_rstar::Point;
-///
-/// struct Location {
-///     lat: f32,
-///     lon: f32,
-/// }
-///
-/// impl Point for Location {
-///     fn point(&self) -> (f32, f32) {
-///         (self.lon, self.lat)
-///     }
-/// }
-/// ```
-pub trait Point: RstarPoint {
-    /// Returns a tuple containing the x and y coordinates of the point.
-    ///
-    /// # Returns
-    ///
-    /// * `(f32, f32)` - A tuple where the first element is the x-coordinate and the second element is the y-coordinate
-    fn point(&self) -> (f32, f32);
+pub trait GeohashRTreeObject:
+    RTreeObject
+    + PointDistance
+    + PartialEq
+    + Clone
+    + Send
+    + Sync
+    + bincode::Decode<()>
+    + bincode::Encode
+    + 'static
+{
+    fn unique_id(&self) -> String;
 
-    /// Calculates the Haversine distance between two points on Earth's surface.
-    ///
-    /// Returns the distance in meters between this point and another point,
-    /// using the Haversine formula which accounts for Earth's spherical shape.
-    ///
-    /// # Arguments
-    ///
-    /// * `other` - The other point to calculate distance to
-    ///
-    /// # Returns
-    ///
-    /// The distance in meters between the two points
-    fn distance(&self, other: &Self) -> f64 {
-        let (x, y) = self.point();
-        let (other_x, other_y) = other.point();
-        Haversine::distance(
-            geo::Point::new(x as f64, y as f64),
-            geo::Point::new(other_x as f64, other_y as f64),
-        )
-    }
+    fn x_y(&self) -> (f64, f64);
 
     /// Generates a geohash string representation of the point with specified precision.
     ///
@@ -211,24 +175,24 @@ pub trait Point: RstarPoint {
     /// * `Ok(String)` - The geohash string representation
     /// * `Err(GeohashRTreeError)` - If geohash encoding fails
     fn gen_geohash_str(&self, geohash_precision: usize) -> Result<String, GeohashRTreeError> {
-        let (x, y) = self.point();
-        let geohash_str = encode(
-            Coord {
-                x: x as f64,
-                y: y as f64,
-            },
-            geohash_precision,
-        )?;
+        let (x, y) = self.x_y();
+        let geohash_str = encode(Coord { x, y }, geohash_precision)?;
         Ok(geohash_str)
     }
 }
 
-/// A trait for objects that can provide a unique identifier.
-///
-/// This trait should be implemented by types that need to be uniquely identifiable.
-/// The unique identifier is returned as a String value.
-pub trait Unique {
-    fn unique_id(&self) -> String;
+#[derive(Error, Debug)]
+pub enum GeohashRTreeError {
+    #[error("persistence file not found, {0:?}")]
+    LoadError(#[from] sled::Error),
+    #[error("geohash error, {0:?}")]
+    GeohashError(#[from] geohash::GeohashError),
+    #[error("bincode decode error, {0:?}")]
+    BincodeDecodeError(#[from] bincode::error::DecodeError),
+    #[error("bincode encode error, {0:?}")]
+    BincodeEncodeError(#[from] bincode::error::EncodeError),
+    #[error("unknown error")]
+    Unknown,
 }
 
 /// A concurrent geohash-based R-tree structure for spatial indexing.
@@ -248,30 +212,16 @@ pub trait Unique {
 /// * `db` - Optional persistent storage backend using sled database
 pub struct GeohashRTree<T>
 where
-    T: Unique + Point + Clone + Send + Sync + bincode::Decode<()> + bincode::Encode + 'static,
+    T: GeohashRTreeObject,
 {
     arc_dashmap: Arc<DashMap<String, RTree<T>>>,
     geohash_precision: usize,
     db: Option<Arc<sled::Db>>,
 }
 
-#[derive(Error, Debug)]
-pub enum GeohashRTreeError {
-    #[error("persistence file not found, {0:?}")]
-    LoadError(#[from] sled::Error),
-    #[error("geohash error, {0:?}")]
-    GeohashError(#[from] geohash::GeohashError),
-    #[error("bincode decode error, {0:?}")]
-    BincodeDecodeError(#[from] bincode::error::DecodeError),
-    #[error("bincode encode error, {0:?}")]
-    BincodeEncodeError(#[from] bincode::error::EncodeError),
-    #[error("unknown error")]
-    Unknown,
-}
-
 impl<T> GeohashRTree<T>
 where
-    T: Unique + Point + Clone + Send + Sync + bincode::Decode<()> + bincode::Encode,
+    T: GeohashRTreeObject,
 {
     const DEFAULT_SLED_CACHE_CAPACITY: u64 = 1024 * 1024 * 100; // 100M
 
@@ -341,66 +291,6 @@ where
         Ok(hrt)
     }
 
-    pub fn load_async(
-        geohash_precision: usize,
-        persistence_path: PathBuf,
-    ) -> Result<Self, GeohashRTreeError> {
-        let db: sled::Db = sled::Config::default()
-            .cache_capacity(Self::DEFAULT_SLED_CACHE_CAPACITY)
-            .path(persistence_path)
-            .open()?;
-        let hrt = Self {
-            arc_dashmap: Arc::new(DashMap::new()),
-            geohash_precision,
-            db: Some(Arc::new(db)),
-        };
-        let acr_dashmap = Arc::clone(&hrt.arc_dashmap);
-
-        if let Some(db) = hrt.db.clone() {
-            // Load the data from the persistence path
-            thread::spawn(move || {
-                let config = bincode::config::standard();
-                let mut itr = db.iter();
-                let now = SystemTime::now();
-                while let Some(entry) = itr.next() {
-                    let (_, value) = match entry {
-                        Ok((uid, value)) => (uid, value),
-                        Err(e) => {
-                            println!("error: {}", e);
-                            return ();
-                        }
-                    };
-                    let t = match bincode::decode_from_slice::<T, _>(&value, config) {
-                        Ok((t, _)) => t,
-                        Err(e) => {
-                            println!("error: {}", e);
-                            return ();
-                        }
-                    };
-                    let geohash_str = match t.gen_geohash_str(geohash_precision) {
-                        Ok(h) => h,
-                        Err(e) => {
-                            println!("error: {}", e);
-                            return ();
-                        }
-                    };
-                    acr_dashmap
-                        .entry(geohash_str)
-                        .or_insert(RTree::new())
-                        .insert(t);
-                }
-
-                println!(
-                    "loaded elapsed time: {:?}, total: {}",
-                    now.elapsed().unwrap(),
-                    db.len()
-                );
-            });
-        }
-
-        Ok(hrt)
-    }
-
     pub fn insert(&self, t: T) -> Result<(), GeohashRTreeError> {
         let geohash_str = t.gen_geohash_str(self.geohash_precision)?;
         if let Some(db) = &self.db {
@@ -414,15 +304,16 @@ where
 
     pub fn remove(&self, t: &T) -> Result<Option<T>, GeohashRTreeError> {
         let geohash_str = t.gen_geohash_str(self.geohash_precision)?;
-        if let Some(db) = &self.db {
-            db.remove(t.unique_id())?;
+        if let Some(mut rtree) = self.arc_dashmap.get_mut(&geohash_str) {
+            if let Some(rm) = rtree.remove(t) {
+                if let Some(db) = &self.db {
+                    db.remove(rm.unique_id())?;
+                }
+                return Ok(Some(rm));
+            }
         }
-        let removed = if let Some(mut rtree) = self.arc_dashmap.get_mut(&geohash_str) {
-            rtree.remove(t)
-        } else {
-            None
-        };
-        Ok(removed)
+
+        Ok(None)
     }
 
     /// use only db exist
@@ -474,15 +365,7 @@ where
     /// - Quick approximate results are acceptable
     /// - The target point is likely close to existing points
     pub fn adjacent_cells_nearest(&self, query_point: &T) -> Result<Option<T>, GeohashRTreeError> {
-        let lnglat = query_point.point();
-        let geohash_str = encode(
-            Coord {
-                x: lnglat.0 as f64,
-                y: lnglat.1 as f64,
-            },
-            self.geohash_precision,
-        )?;
-
+        let geohash_str = query_point.gen_geohash_str(self.geohash_precision)?;
         let mut nearests = vec![];
         if let Some(nearest) = self.nearest(query_point, &geohash_str)? {
             nearests.push(nearest);
@@ -513,8 +396,8 @@ where
             nearests.push(nearest);
         }
         nearests.sort_by(|a, b| {
-            let a_distance = a.distance(query_point);
-            let b_distance = b.distance(query_point);
+            let a_distance = a.distance_2(&query_point.envelope().center());
+            let b_distance = b.distance_2(&query_point.envelope().center());
             a_distance
                 .partial_cmp(&b_distance)
                 .unwrap_or(Ordering::Equal)
@@ -576,25 +459,22 @@ where
     /// - Exact nearest neighbor is required
     /// - Performance is less critical than accuracy
     /// - Large search areas need to be covered
-    pub fn sorted_cells_nearest(&self, query_point: &T) -> Result<Option<T>, GeohashRTreeError> {
-        let lnglat = query_point.point();
-        let point = geo::point!(x: lnglat.0 as f64, y: lnglat.1 as f64);
+    pub fn sorted_cells_nearest(&self, query: &T) -> Result<Option<T>, GeohashRTreeError> {
+        let (x, y) = query.x_y();
+        let point = geo::point!(x: x, y: y);
         let sorted_geohash_cells = utils::sort_geohash_neighbors(point, self.geohash_precision)?;
 
-        for s in sorted_geohash_cells.iter().enumerate() {
-            if let Some(nearest) = self.nearest(query_point, &s.1.0)? {
-                let nearest_p = nearest.point();
-
-                // last geohash cell
-                if s.0 == sorted_geohash_cells.len() - 1 {
-                    return Ok(Some(nearest));
-                }
-
-                let dist = Haversine::distance(
-                    point,
-                    geo::point!(x: nearest_p.0 as f64, y: nearest_p.1 as f64),
-                );
-                if dist <= sorted_geohash_cells[s.0 + 1].1 {
+        for idx in 0..sorted_geohash_cells.len() {
+            let cursor = sorted_geohash_cells.get(idx).unwrap();
+            if let Some(nearest) = self.nearest(query, &cursor.0)? {
+                if let Some(next) = sorted_geohash_cells.get(idx + 1) {
+                    let nearest_p = nearest.x_y();
+                    let dist =
+                        Haversine::distance(point, geo::point!(x: nearest_p.0 , y: nearest_p.1));
+                    if dist <= next.1 {
+                        return Ok(Some(nearest));
+                    }
+                } else {
                     return Ok(Some(nearest));
                 }
             }
@@ -611,53 +491,41 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bincode::{Decode, Encode};
+    use rstar::AABB;
+    use rstar::RTreeObject;
 
-    #[derive(Clone, PartialEq, Debug, Encode, Decode)]
+    #[derive(Debug, PartialEq, Clone, bincode::Encode, bincode::Decode)]
     struct Location {
-        name: String,
-        x_coordinate: f32,
-        y_coordinate: f32,
+        id: String,
+        x_coordinate: f64,
+        y_coordinate: f64,
     }
 
-    impl Point for Location {
-        fn point(&self) -> (f32, f32) {
+    impl GeohashRTreeObject for Location {
+        fn unique_id(&self) -> String {
+            self.id.clone()
+        }
+
+        fn x_y(&self) -> (f64, f64) {
             (self.x_coordinate, self.y_coordinate)
         }
     }
 
-    impl Unique for Location {
-        fn unique_id(&self) -> String {
-            self.name.clone()
+    impl RTreeObject for Location {
+        type Envelope = AABB<[f64; 2]>;
+
+        fn envelope(&self) -> Self::Envelope {
+            AABB::from_point([self.x_coordinate, self.y_coordinate])
         }
     }
 
-    impl RstarPoint for Location {
-        type Scalar = f32;
-        const DIMENSIONS: usize = 2;
-
-        fn generate(mut generator: impl FnMut(usize) -> Self::Scalar) -> Self {
-            Location {
-                name: "X".to_string(),
-                x_coordinate: generator(0),
-                y_coordinate: generator(1),
-            }
-        }
-
-        fn nth(&self, index: usize) -> Self::Scalar {
-            match index {
-                0 => self.x_coordinate,
-                1 => self.y_coordinate,
-                _ => unreachable!(),
-            }
-        }
-
-        fn nth_mut(&mut self, index: usize) -> &mut Self::Scalar {
-            match index {
-                0 => &mut self.x_coordinate,
-                1 => &mut self.y_coordinate,
-                _ => unreachable!(),
-            }
+    // Implement PointDistance for Player
+    impl PointDistance for Location {
+        fn distance_2(&self, point: &[f64; 2]) -> f64 {
+            let d_x = self.x_coordinate - point[0];
+            let d_y = self.x_coordinate - point[0];
+            let distance_to_origin = (d_x * d_x + d_y * d_y).sqrt();
+            distance_to_origin
         }
     }
 
@@ -666,17 +534,17 @@ mod tests {
         let hrt: GeohashRTree<Location> = GeohashRTree::new(5, None).unwrap();
         let players = vec![
             Location {
-                name: "1".into(),
+                id: "1".into(),
                 x_coordinate: 116.400357,
                 y_coordinate: 39.906453,
             },
             Location {
-                name: "2".into(),
+                id: "2".into(),
                 x_coordinate: 116.401633,
                 y_coordinate: 39.906302,
             },
             Location {
-                name: "3".into(),
+                id: "3".into(),
                 x_coordinate: 116.401645,
                 y_coordinate: 39.904753,
             },
@@ -687,7 +555,7 @@ mod tests {
 
         let nearest = hrt
             .adjacent_cells_nearest(&Location {
-                name: "1".into(),
+                id: "1".into(),
                 x_coordinate: 116.400357,
                 y_coordinate: 39.906453,
             })
@@ -702,17 +570,17 @@ mod tests {
         let hrt: GeohashRTree<Location> = GeohashRTree::new(5, None).unwrap();
         let players = vec![
             Location {
-                name: "1".into(),
+                id: "1".into(),
                 x_coordinate: 116.400357,
                 y_coordinate: 39.906453,
             },
             Location {
-                name: "2".into(),
+                id: "2".into(),
                 x_coordinate: 116.401633,
                 y_coordinate: 39.906302,
             },
             Location {
-                name: "3".into(),
+                id: "3".into(),
                 x_coordinate: 116.401645,
                 y_coordinate: 39.904753,
             },
@@ -731,17 +599,17 @@ mod tests {
         let hrt: GeohashRTree<Location> = GeohashRTree::new(5, None).unwrap();
         let players = vec![
             Location {
-                name: "1".into(),
+                id: "1".into(),
                 x_coordinate: 116.400357,
                 y_coordinate: 39.906453,
             },
             Location {
-                name: "2".into(),
+                id: "2".into(),
                 x_coordinate: 116.401633,
                 y_coordinate: 39.906302,
             },
             Location {
-                name: "3".into(),
+                id: "3".into(),
                 x_coordinate: 116.401645,
                 y_coordinate: 39.904753,
             },
@@ -752,7 +620,7 @@ mod tests {
 
         let nearest = hrt
             .sorted_cells_nearest(&Location {
-                name: "1".into(),
+                id: "1".into(),
                 x_coordinate: 116.400357,
                 y_coordinate: 39.906453,
             })
