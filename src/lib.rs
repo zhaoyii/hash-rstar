@@ -472,10 +472,9 @@ mod tests {
     // Implement PointDistance for Player
     impl PointDistance for Location {
         fn distance_2(&self, point: &[f64; 2]) -> f64 {
-            let d_x = self.x_coordinate - point[0];
-            let d_y = self.x_coordinate - point[0];
-            let distance_to_origin = (d_x * d_x + d_y * d_y).sqrt();
-            distance_to_origin
+            let self_geo_point = geo::point!(x: self.x_coordinate, y: self.y_coordinate);
+            let target_geo_point = geo::point!(x: point[0], y: point[1]);
+            Haversine::distance(self_geo_point, target_geo_point)
         }
     }
 
