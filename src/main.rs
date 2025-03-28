@@ -21,6 +21,7 @@
 //!
 //! Environment variables:
 //! * `HASH_RSTAR_DB` - Database file path
+//!   * in-memory (default)
 //! * `HASH_RSTAR_GEOHASH_PRECISION` - Geohash precision (default: 5)
 use axum::{
     Json, Router,
@@ -77,23 +78,32 @@ struct AppState {
 
 #[tokio::main]
 async fn main() {
-    let default_db_path = if let Ok(db) = std::env::var("HASH_RSTAR_DB") {
-        db
-    } else if cfg!(windows) {
+    let mut db_path = if cfg!(windows) {
         let program_data = std::env::var("PROGRAMDATA").unwrap_or("C:\\ProgramData".to_string());
-        format!("{}\\hash-rstar\\data", program_data)
+        Some(format!("{}\\hash-rstar\\data", program_data))
     } else {
-        "/var/lib/hash-rstar/data".to_string()
+        Some("/var/lib/hash-rstar/data".to_string())
     };
+    if let Ok(db) = std::env::var("HASH_RSTAR_DB") {
+        if db == "in-memory" {
+            db_path = None;
+        } else {
+            db_path = Some(db);
+        }
+    }
 
     let geohash_precision: usize = std::env::var("HASH_RSTAR_GEOHASH_PRECISION")
         .unwrap_or("5".to_string())
         .parse()
         .unwrap();
 
-    let shared_state = Arc::new(AppState {
-        hash_rtree: GeohashRTree::load(geohash_precision, PathBuf::from(&default_db_path)).unwrap(),
-    });
+    let hash_rtree = if let Some(db_path) = db_path {
+        GeohashRTree::load(geohash_precision, PathBuf::from(&db_path)).unwrap()
+    } else {
+        GeohashRTree::new(geohash_precision, None).unwrap()
+    };
+
+    let shared_state = Arc::new(AppState { hash_rtree });
 
     let app = Router::new()
         .route("/nearest/{lonlat}", get(nearest))

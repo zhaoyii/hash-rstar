@@ -16,79 +16,37 @@
 //! ## Usage
 //!
 //! ```rust
-//! use hash_rstar::{GeohashRTree, Point, Unique, RstarPoint};
+//! use hash_rstar::{GeohashRTree, GeohashRTreeObject};
 //!
-//! // Define your point type
-//! #[derive(Clone)]
+//! #[derive(Debug, PartialEq, Clone, bincode::Encode, bincode::Decode)]
 //! struct Location {
 //!     id: String,
-//!     lat: f32,
-//!     lon: f32,
+//!     x_coordinate: f64,
+//!     y_coordinate: f64,
 //! }
 //!
-//! // Implement Point trait for geographic coordinates
-//! impl Point for Location {
-//!     fn point(&self) -> (f32, f32) {
-//!         (self.lon, self.lat)
-//!     }
-//! }
-//!
-//! // Implement Unique trait for persistence
-//! impl Unique for Location {
+//! impl GeohashRTreeObject for Location {
 //!     fn unique_id(&self) -> String {
 //!         self.id.clone()
 //!     }
-//! }
 //!
-//! // Implement RstarPoint trait for R-tree operations
-//! impl RstarPoint for Location {
-//!     type Scalar = f32;
-//!     const DIMENSIONS: usize = 2;
-//!
-//!     fn generate(mut generator: impl FnMut(usize) -> Self::Scalar) -> Self {
-//!         Location {
-//!             id: "X".to_string(),
-//!             lon: generator(0),
-//!             lat: generator(1),
-//!         }
-//!     }
-//!
-//!     fn nth(&self, index: usize) -> Self::Scalar {
-//!         match index {
-//!             0 => self.lon,
-//!             1 => self.lat,
-//!             _ => unreachable!(),
-//!         }
-//!     }
-//!
-//!     fn nth_mut(&mut self, index: usize) -> &mut Self::Scalar {
-//!         match index {
-//!             0 => &mut self.lon,
-//!             1 => &mut self.lat,
-//!             _ => unreachable!(),
-//!         }
+//!     fn x_y(&self) -> (f64, f64) {
+//!         (self.x_coordinate, self.y_coordinate)
 //!     }
 //! }
 //!
-//! // Create and use the spatial index
-//! fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     // Create new index with geohash precision 6
-//!     let tree = GeohashRTree::new(6, None)?;
+//! let tree: GeohashRTree<Location> = GeohashRTree::new(5, None).unwrap();
 //!
-//!     // Insert points
-//!     let point = Location {
-//!         id: "1".into(),
-//!         lon: 116.400357,
-//!         lat: 39.906453,
-//!     };
-//!     tree.insert(point.clone())?;
+//! let location = Location {
+//!     id: "1".into(),
+//!     x_coordinate: 116.400357,
+//!     y_coordinate: 39.906453,
+//! };
 //!
-//!     // Find nearest neighbor
-//!     if let Some(nearest) = tree.adjacent_cells_nearest(&point)? {
-//!         println!("Found nearest point: {:?}", nearest);
-//!     }
-//!     
-//!     Ok(())
+//! tree.insert(location.clone()).unwrap();
+//!
+//! if let Some(nearest) = tree.adjacent_cells_nearest(&location).unwrap() {
+//!     println!("Found nearest point: {:?}", nearest);
 //! }
 //! ```
 //!
@@ -113,14 +71,7 @@
 //! ```rust
 //! use std::path::PathBuf;
 //!
-//! // Create persistent index
-//! let tree = GeohashRTree::new(6, Some(PathBuf::from("data.db")))?;
-//!
-//! // Load existing data
-//! let tree = GeohashRTree::load(6, PathBuf::from("data.db"))?;
-//!
-//! // Async loading
-//! let tree = GeohashRTree::load_async(6, PathBuf::from("data.db"))?;
+//! let tree = GeohashRTree::new(6, Some(PathBuf::from("data.db"))).unwrap();
 //! ```
 //!
 //! ## Thread Safety
@@ -143,8 +94,7 @@ use geohash::{Coord, encode};
 use rstar::{Envelope, RTree};
 use std::cmp::Ordering;
 use std::time::SystemTime;
-use std::{path::PathBuf, sync::Arc};
-use std::{thread, vec};
+use std::{path::PathBuf, sync::Arc, vec};
 use thiserror::Error;
 
 pub use rstar::{AABB, PointDistance, RTreeObject};
