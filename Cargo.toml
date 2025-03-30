@@ -7,7 +7,7 @@ description = "A concurrent spatial index combining geohash and R-tree data stru
 license = "MIT"
 repository = "https://github.com/zhaoyii/hash-rstar"
 keywords = ["geohash", "r-tree", "spatial-indexing"]
-categories = ["geospatial"]
+categories = ["science::geo"]
 readme = "README.md"
 
 [dependencies]
