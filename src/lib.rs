@@ -261,6 +261,25 @@ where
         Ok(hrt)
     }
 
+    /// Asynchronously loads geospatial data from a persistent storage into a Geohash R-tree structure.
+    ///
+    /// # Arguments
+    ///
+    /// * `geohash_precision` - The precision level for geohash calculations
+    /// * `persistence_path` - Path to the persistent storage location
+    ///
+    /// # Returns
+    ///
+    /// * `Result<Self, GeohashRTreeError>` - Returns the initialized structure on success, or an error
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let hrt = GeohashRTree::load_async(5, PathBuf::from("data/store"))?;
+    /// ```
+    ///
+    /// The function spawns a background thread to load data from sled database,
+    /// allowing the main thread to continue execution while data is being loaded.
     pub fn load_async(
         geohash_precision: usize,
         persistence_path: PathBuf,
