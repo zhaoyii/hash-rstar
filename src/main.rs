@@ -98,7 +98,7 @@ async fn main() {
         .unwrap();
 
     let hash_rtree = if let Some(db_path) = db_path {
-        GeohashRTree::load(geohash_precision, PathBuf::from(&db_path)).unwrap()
+        GeohashRTree::load_async(geohash_precision, PathBuf::from(&db_path)).unwrap()
     } else {
         GeohashRTree::new(geohash_precision, None).unwrap()
     };

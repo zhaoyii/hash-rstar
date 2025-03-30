@@ -14,9 +14,9 @@ if [ "$1" == "release" ]; then
 fi
 
 # Build the Docker image
-docker build -t "hash-rstar:${DOCKER_TAG}" .
+docker build -t "zhaoyii/hash-rstar:${DOCKER_TAG}" .
 
 # Tag the current version as latest
 if [ "$1" == "release" ]; then
-    docker tag "hash-rstar:${DOCKER_TAG}" "hash-rstar:latest"
+    docker tag "zhaoyii/hash-rstar:${DOCKER_TAG}" "zhaoyii/hash-rstar:latest"
 fi
