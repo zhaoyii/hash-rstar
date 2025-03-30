@@ -24,7 +24,8 @@ By combining hash indexing with the R* tree, a Rust-based implementation achieve
 Below is an example of how to use `hash-rstar`:
 
 ```rust
-use hash_rstar::{GeohashRTree, GeohashRTreeObject};
+use hash_rstar::{AABB, GeohashRTree, GeohashRTreeObject, PointDistance, RTreeObject};
+use geo::{Distance, Haversine};
 
 #[derive(Debug, PartialEq, Clone, bincode::Encode, bincode::Decode)]
 struct Location {
@@ -40,6 +41,14 @@ impl GeohashRTreeObject for Location {
 
     fn x_y(&self) -> (f64, f64) {
         (self.x_coordinate, self.y_coordinate)
+    }
+}
+
+impl RTreeObject for Location {
+    type Envelope = AABB<[f64; 2]>;
+
+    fn envelope(&self) -> Self::Envelope {
+        AABB::from_point([self.x_coordinate, self.y_coordinate])
     }
 }
 
@@ -63,6 +72,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+## RESTful Server with Docker Image
+
+This project also provides a RESTful server implementation using a Docker image. The server enables spatial querying capabilities, such as nearest neighbor searches, adding locations, and deleting locations. For detailed instructions on how to use the Docker image, refer to the [IMAGE-GUIDE.md](IMAGE-GUIDE.md) file.
 
 ## Key Technologies
 

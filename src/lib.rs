@@ -16,7 +16,8 @@
 //! ## Usage
 //!
 //! ```rust
-//! use hash_rstar::{GeohashRTree, GeohashRTreeObject};
+//! use hash_rstar::{AABB, GeohashRTree, GeohashRTreeObject, PointDistance, RTreeObject};
+//! use geo::{Distance, Haversine};
 //!
 //! #[derive(Debug, PartialEq, Clone, bincode::Encode, bincode::Decode)]
 //! struct Location {
@@ -32,6 +33,22 @@
 //!
 //!     fn x_y(&self) -> (f64, f64) {
 //!         (self.x_coordinate, self.y_coordinate)
+//!     }
+//! }
+//!
+//! impl RTreeObject for Location {
+//!     type Envelope = AABB<[f64; 2]>;
+
+//!     fn envelope(&self) -> Self::Envelope {
+//!         AABB::from_point([self.x_coordinate, self.y_coordinate])
+//!     }
+//! }
+//!
+//! impl PointDistance for Location {
+//!     fn distance_2(&self, point: &[f64; 2]) -> f64 {
+//!         let self_geo_point = geo::point!(x: self.x_coordinate, y: self.y_coordinate);
+//!         let target_geo_point = geo::point!(x: point[0], y: point[1]);
+//!         Haversine::distance(self_geo_point, target_geo_point)
 //!     }
 //! }
 //!
@@ -469,7 +486,6 @@ mod tests {
         }
     }
 
-    // Implement PointDistance for Player
     impl PointDistance for Location {
         fn distance_2(&self, point: &[f64; 2]) -> f64 {
             let self_geo_point = geo::point!(x: self.x_coordinate, y: self.y_coordinate);
@@ -481,7 +497,7 @@ mod tests {
     #[test]
     fn test_insert() {
         let hrt: GeohashRTree<Location> = GeohashRTree::new(5, None).unwrap();
-        let players = vec![
+        let locations = vec![
             Location {
                 id: "1".into(),
                 x_coordinate: 116.400357,
@@ -498,9 +514,9 @@ mod tests {
                 y_coordinate: 39.904753,
             },
         ];
-        hrt.insert(players[0].clone()).unwrap();
-        hrt.insert(players[1].clone()).unwrap();
-        hrt.insert(players[2].clone()).unwrap();
+        hrt.insert(locations[0].clone()).unwrap();
+        hrt.insert(locations[1].clone()).unwrap();
+        hrt.insert(locations[2].clone()).unwrap();
 
         let nearest = hrt
             .adjacent_cells_nearest(&Location {
@@ -511,13 +527,13 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(players[0], nearest);
+        assert_eq!(locations[0], nearest);
     }
 
     #[test]
     fn test_remove() {
         let hrt: GeohashRTree<Location> = GeohashRTree::new(5, None).unwrap();
-        let players = vec![
+        let locations = vec![
             Location {
                 id: "1".into(),
                 x_coordinate: 116.400357,
@@ -534,19 +550,19 @@ mod tests {
                 y_coordinate: 39.904753,
             },
         ];
-        hrt.insert(players[0].clone()).unwrap();
-        hrt.insert(players[1].clone()).unwrap();
-        hrt.insert(players[2].clone()).unwrap();
+        hrt.insert(locations[0].clone()).unwrap();
+        hrt.insert(locations[1].clone()).unwrap();
+        hrt.insert(locations[2].clone()).unwrap();
 
-        assert_eq!(players[0], hrt.remove(&players[0]).unwrap().unwrap());
-        assert_eq!(players[1], hrt.remove(&players[1]).unwrap().unwrap());
-        assert_eq!(players[2], hrt.remove(&players[2]).unwrap().unwrap());
+        assert_eq!(locations[0], hrt.remove(&locations[0]).unwrap().unwrap());
+        assert_eq!(locations[1], hrt.remove(&locations[1]).unwrap().unwrap());
+        assert_eq!(locations[2], hrt.remove(&locations[2]).unwrap().unwrap());
     }
 
     #[test]
     fn test_sorted_cells_nearest() {
         let hrt: GeohashRTree<Location> = GeohashRTree::new(5, None).unwrap();
-        let players = vec![
+        let locations = vec![
             Location {
                 id: "1".into(),
                 x_coordinate: 116.400357,
@@ -563,9 +579,9 @@ mod tests {
                 y_coordinate: 39.904753,
             },
         ];
-        hrt.insert(players[0].clone()).unwrap();
-        hrt.insert(players[1].clone()).unwrap();
-        hrt.insert(players[2].clone()).unwrap();
+        hrt.insert(locations[0].clone()).unwrap();
+        hrt.insert(locations[1].clone()).unwrap();
+        hrt.insert(locations[2].clone()).unwrap();
 
         let nearest = hrt
             .sorted_cells_nearest(&Location {
@@ -576,6 +592,6 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(players[0], nearest);
+        assert_eq!(locations[0], nearest);
     }
 }
