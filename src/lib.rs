@@ -110,6 +110,7 @@ use geo::{Distance, Haversine};
 use geohash::{Coord, encode};
 use rstar::{Envelope, RTree};
 use std::cmp::Ordering;
+use std::thread;
 use std::time::SystemTime;
 use std::{path::PathBuf, sync::Arc, vec};
 use thiserror::Error;
@@ -180,6 +181,7 @@ pub enum GeohashRTreeError {
 pub struct GeohashRTree<T>
 where
     T: GeohashRTreeObject,
+    T::Envelope: Send + Sync,
 {
     arc_dashmap: Arc<DashMap<String, RTree<T>>>,
     geohash_precision: usize,
@@ -189,6 +191,7 @@ where
 impl<T> GeohashRTree<T>
 where
     T: GeohashRTreeObject,
+    T::Envelope: Send + Sync,
 {
     const DEFAULT_SLED_CACHE_CAPACITY: u64 = 1024 * 1024 * 100; // 100M
 
@@ -255,6 +258,63 @@ where
                 db.len()
             );
         }
+        Ok(hrt)
+    }
+
+    pub fn load_async(
+        geohash_precision: usize,
+        persistence_path: PathBuf,
+    ) -> Result<Self, GeohashRTreeError> {
+        let db: sled::Db = sled::Config::default().path(persistence_path).open()?;
+        let hrt = Self {
+            arc_dashmap: Arc::new(DashMap::new()),
+            geohash_precision,
+            db: Some(Arc::new(db)),
+        };
+        let acr_dashmap = Arc::clone(&hrt.arc_dashmap);
+
+        if let Some(db) = hrt.db.clone() {
+            // Load the data from the persistence path
+            thread::spawn(move || {
+                let config = bincode::config::standard();
+                let mut itr = db.iter();
+                let now = SystemTime::now();
+                while let Some(entry) = itr.next() {
+                    let (_, value) = match entry {
+                        Ok((uid, value)) => (uid, value),
+                        Err(e) => {
+                            println!("error: {}", e);
+                            return ();
+                        }
+                    };
+                    let t = match bincode::decode_from_slice::<T, _>(&value, config) {
+                        Ok((t, _)) => t,
+                        Err(e) => {
+                            println!("error: {}", e);
+                            return ();
+                        }
+                    };
+                    let geohash_str = match t.gen_geohash_str(geohash_precision) {
+                        Ok(h) => h,
+                        Err(e) => {
+                            println!("error: {}", e);
+                            return ();
+                        }
+                    };
+                    acr_dashmap
+                        .entry(geohash_str)
+                        .or_insert(RTree::new())
+                        .insert(t);
+                }
+
+                println!(
+                    "loaded elapsed time: {:?}, total: {}",
+                    now.elapsed().unwrap(),
+                    db.len()
+                );
+            });
+        }
+
         Ok(hrt)
     }
 
