@@ -6,8 +6,8 @@ authors = ["Zhaoyii <532708564@QQ.com>"]
 description = "A concurrent spatial index combining geohash and R-tree data structures for efficient geographic point queries."
 license = "MIT"
 repository = "https://github.com/zhaoyii/hash-rstar"
-keywords = ["rust", "spatial", "geohash", "rstar", "r-tree", "spatial-indexing"]
-categories = ["algorithms", "data-structures", "geospatial"]
+keywords = ["geohash", "r-tree", "spatial-indexing"]
+categories = ["geospatial"]
 readme = "README.md"
 
 [dependencies]
@@ -28,4 +28,3 @@ sled = "0.34.7"
 thiserror = "2.0.12"
 tokio = { version = "1.44.1", features = ["rt-multi-thread", "macros"] }
 tower-http = { version = "0.6.2", features = ["cors"] }
-
